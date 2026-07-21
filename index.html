@@ -39,7 +39,7 @@
 <div id="app" class="app app--hidden">
 
   <!-- STATUS BAR -->
-  <header class="statusbar">
+  <header class="statusbar surface-premium">
     <div class="statusbar__left">
       <span class="statusbar__clock" id="clock">00:00</span>
     </div>
@@ -69,7 +69,7 @@
   <main class="dashboard" id="view-home">
 
     <!-- LEFT PANEL 40% -->
-    <section class="panel panel--gauge" aria-label="Speedometer dan sensor">
+    <section class="panel panel--gauge surface-premium" aria-label="Speedometer dan sensor">
 
       <!-- Analog + digital speedometer -->
       <div class="speedo" id="speedo">
@@ -96,6 +96,11 @@
         </div>
       </div>
 
+      <div class="gps-banner" id="gps-banner" hidden>
+        <span class="gps-banner__dot"></span>
+        <span id="gps-banner-text">Mencari Lokasi...</span>
+      </div>
+
       <!-- Sensor info cards row 1 -->
       <div class="cardgrid">
         <div class="mini-card">
@@ -109,6 +114,7 @@
         <div class="mini-card">
           <span class="mini-card__label">GPS ACCURACY</span>
           <span class="mini-card__value" id="val-accuracy">± -- m</span>
+          <span class="mini-card__quality" id="val-gps-quality" data-quality="">--</span>
         </div>
         <div class="mini-card">
           <span class="mini-card__label">SATELLITES</span>
@@ -188,6 +194,11 @@
       </div>
 
       <div id="map-container" class="map-container"></div>
+
+      <button class="resume-follow" id="btn-resume-follow" hidden>
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 2 4.5 20l7.5-4 7.5 4z"/></svg>
+        Kembali Ikuti
+      </button>
 
       <div class="map-controls">
         <button class="map-btn" id="btn-zoom-in" aria-label="Perbesar">+</button>
@@ -270,7 +281,7 @@
   </section>
 
   <!-- BOTTOM NAVIGATION -->
-  <nav class="bottomnav">
+  <nav class="bottomnav surface-premium">
     <button class="bottomnav__item active" data-view="home">
       <svg viewBox="0 0 24 24" class="icon"><path d="M12 3 2 12h3v8h6v-6h2v6h6v-8h3z"/></svg>
       <span>Home</span>

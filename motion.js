@@ -1,10 +1,14 @@
 /**
  * motion.js
- * - Compass heading via DeviceOrientationEvent (absolute alpha, with iOS webkitCompassHeading fallback).
+ * - Compass heading via DeviceOrientationEvent (absolute alpha, with iOS webkitCompassHeading fallback),
+ *   circularly smoothed (shared CircularSmoother from gps.js) so the needle/bearing doesn't
+ *   jitter or snap across the 0°/360° wrap.
  * - Lean angle (roll = kiri/kanan, pitch = depan/belakang) derived from DeviceMotion's
  *   gravity vector (accelerationIncludingGravity), low-pass filtered for smoothness.
  * Handles the iOS 13+ permission-gate (DeviceMotionEvent.requestPermission()).
  */
+
+import { CircularSmoother } from './gps.js';
 
 export class MotionManager {
   constructor() {
@@ -18,6 +22,7 @@ export class MotionManager {
     this._roll = 0;
     this._pitch = 0;
     this._heading = null;
+    this._headingSmoother = new CircularSmoother(0.2);
     this._boundOrientation = this._handleOrientation.bind(this);
     this._boundMotion = this._handleMotion.bind(this);
   }
@@ -67,8 +72,9 @@ export class MotionManager {
     }
     if (heading !== null) {
       heading = (heading + 360) % 360;
-      this._heading = heading;
-      this.emit({ type: 'heading', heading });
+      const smoothed = this._headingSmoother.push(heading);
+      this._heading = smoothed;
+      this.emit({ type: 'heading', heading: smoothed });
     }
   }
 

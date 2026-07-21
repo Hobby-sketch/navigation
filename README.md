@@ -2,6 +2,19 @@
 
 Dashboard speedometer GPS premium untuk Honda BeAT. Vanilla HTML/CSS/JS, tanpa framework, 100% berbasis sensor smartphone (GPS, kompas, akselerometer, giroskop). **Tidak** terhubung ke ECU, CAN Bus, OBD, atau sistem kelistrikan motor manapun.
 
+## Revisi terbaru — Smart GPS Engine & UI Premium
+
+Project ini sudah melalui satu putaran review/refactor tanpa mengubah struktur folder, nama file, atau layout utama:
+
+- **gps.js** — "Smart GPS Engine": Kalman filter untuk posisi, EMA adaptif untuk speed, circular smoothing untuk heading/kompas (anti-jitter di 0°/360°), deteksi gerak (movement detection) dengan hysteresis, drift compensation (posisi dikunci saat motor benar-benar berhenti), noise/outlier rejection, kategori kualitas GPS (Poor/Fair/Good/Excellent), status watchdog (Mencari Lokasi/Lokasi Ditemukan/GPS Lemah/GPS Hilang), dan loop prediksi (dead reckoning) berbasis `requestAnimationFrame` agar titik di peta bergerak mulus di antara dua fix GPS, bukan meloncat.
+- **motion.js** — kompas kini pakai circular smoother yang sama (reuse dari gps.js) agar tidak melompat saat melewati 0°/360°.
+- **map.js** — marker lokasi ala Google Maps (blue dot + pulse + panah arah + accuracy circle akurat dalam meter), Follow GPS otomatis berhenti saat peta digeser manual lalu memunculkan tombol "Kembali Ikuti", seluruh pergerakan kamera (zoom/rotate/follow/fit) memakai easing halus.
+- **storage.js** — tambahan riwayat pencarian & favorit lokasi (localStorage).
+- **style.css** — tampilan dinaikkan ke kelas TFT premium: carbon-fiber weave, hexagon pattern, film-grain noise, dan glassmorphism — semuanya CSS murni (gradient/SVG data-uri), tanpa gambar besar, dan hanya memakai `transform`/`opacity` untuk animasi supaya tetap GPU-friendly & 60fps.
+- **ui.js** — utilitas `debounce`/`throttle` reusable dipakai untuk pencarian & pencarian kategori supaya tidak membanjiri API publik (Nominatim/Overpass).
+
+Semua fitur lama (boot screen, speedometer, trip/odometer, kategori peta, bottom nav, dsb.) tetap berjalan seperti sebelumnya — perubahan di atas bersifat aditif dan backward-compatible.
+
 ## Deploy ke GitHub Pages
 
 1. Buat repo baru di GitHub, lalu push seluruh isi folder ini ke branch `main`.

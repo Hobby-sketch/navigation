@@ -26,7 +26,46 @@
   --font-mono: 'Consolas', 'SF Mono', monospace;
   --statusbar-h: 40px;
   --bottomnav-h: 64px;
+
+  /* Premium surface tokens */
+  --c-blue-dot: #4a9eff;
+  --c-poor: #e04b4b;
+  --c-fair: #f5c542;
+  --c-good: #8fd35c;
+  --c-excellent: #35d07f;
+  --glass-bg: rgba(22, 24, 27, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
+  --noise-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --hex-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='104' viewBox='0 0 60 104'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-opacity='0.05' d='M30 0L60 17.3V52L30 69.3L0 52V17.3Z M30 69.3L60 86.6V104M30 69.3L0 86.6V104M30 0V-17.3'/%3E%3C/svg%3E");
 }
+
+/* Reusable premium surface layer: carbon weave + hex pattern + film grain,
+ * all GPU-cheap (static backgrounds, no per-frame repaint). Apply via
+ * `.surface-premium` on any container that should feel like a cockpit panel. */
+.surface-premium { position: relative; isolation: isolate; }
+.surface-premium::before {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    var(--hex-svg),
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.022) 0px, rgba(255,255,255,0.022) 1px, transparent 1px, transparent 5px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,0.016) 0px, rgba(255,255,255,0.016) 1px, transparent 1px, transparent 5px);
+  background-size: 60px 104px, auto, auto;
+  opacity: 0.5;
+}
+.surface-premium::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: var(--noise-svg);
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+}
+.surface-premium > * { position: relative; z-index: 1; }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -141,11 +180,21 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--c-bg);
+  background:
+    radial-gradient(ellipse 140% 90% at 50% -10%, rgba(216,31,42,0.05), transparent 55%),
+    var(--c-bg);
   opacity: 1;
   transition: opacity 0.6s ease;
 }
 .app.app--hidden { opacity: 0; pointer-events: none; }
+.app::before {
+  /* Cockpit vignette — darkens the frame edges for depth, stays out of the way of controls. */
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 15;
+  background: radial-gradient(ellipse 120% 100% at 50% 50%, transparent 62%, rgba(0,0,0,0.38) 100%);
+}
 
 /* ---------------- STATUS BAR ---------------- */
 .statusbar {
@@ -178,6 +227,9 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .status-chip[data-state="on"], .status-chip[data-state="active"] { color: var(--c-white); }
 .status-chip[data-state="searching"] { color: var(--c-yellow); }
 .status-chip[data-state="off"] { color: var(--c-silver-dim); opacity: 0.5; }
+.status-chip[data-state="weak"] { color: var(--c-fair); }
+.status-chip[data-state="lost"], .status-chip[data-state="denied"] { color: var(--c-poor); }
+.status-chip[data-state="unsupported"] { color: var(--c-silver-dim); opacity: 0.4; }
 
 .gps-bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .gps-bars i { display: block; width: 2.5px; background: currentColor; border-radius: 1px; }
@@ -298,6 +350,40 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   margin-top: 2px;
 }
 
+/* ---------------- GPS STATUS BANNER ---------------- */
+.gps-banner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(245, 197, 66, 0.12);
+  border: 1px solid rgba(245, 197, 66, 0.3);
+  color: var(--c-fair);
+  flex-shrink: 0;
+}
+.gps-banner__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+  animation: gpsBannerBlink 1.4s ease-in-out infinite;
+  will-change: opacity;
+}
+@keyframes gpsBannerBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.gps-banner[data-status="lost"],
+.gps-banner[data-status="denied"] {
+  background: rgba(224, 75, 75, 0.12);
+  border-color: rgba(224, 75, 75, 0.3);
+  color: var(--c-poor);
+}
+.gps-banner[data-status="searching"] {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--c-border-strong);
+  color: var(--c-silver);
+}
+
 /* ---------------- MINI CARDS ---------------- */
 .cardgrid {
   display: grid;
@@ -310,8 +396,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 
 .mini-card {
   position: relative;
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-border);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
   border-radius: var(--radius-sm);
   padding: 6px 4px;
   display: flex;
@@ -320,6 +409,20 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   gap: 2px;
   min-width: 0;
 }
+.mini-card__quality {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-top: 1px;
+  background: rgba(255,255,255,0.06);
+  color: var(--c-silver-dim);
+}
+.mini-card__quality[data-quality="excellent"] { color: var(--c-excellent); background: rgba(53,208,127,0.14); }
+.mini-card__quality[data-quality="good"] { color: var(--c-good); background: rgba(143,211,92,0.14); }
+.mini-card__quality[data-quality="fair"] { color: var(--c-fair); background: rgba(245,197,66,0.14); }
+.mini-card__quality[data-quality="poor"] { color: var(--c-poor); background: rgba(224,75,75,0.14); }
 .mini-card__label {
   font-size: 8.5px;
   letter-spacing: 0.5px;
@@ -355,11 +458,15 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-border);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
   border-radius: var(--radius-md);
   padding: 6px 10px;
   flex-shrink: 0;
+  transition: box-shadow 0.25s ease;
 }
 .lean-panel__visual { width: 52px; height: 52px; flex-shrink: 0; }
 .lean-bike { width: 100%; height: 100%; }
@@ -448,10 +555,32 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   font-size: 12.5px;
   border-bottom: 1px solid var(--c-border);
   color: var(--c-white);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.map-search__result-text { flex: 1; min-width: 0; }
 .map-search__result small { display: block; color: var(--c-silver-dim); font-size: 10.5px; margin-top: 2px; }
 .map-search__result:last-child { border-bottom: none; }
 .map-search__result:active { background: rgba(216,31,42,0.15); }
+.map-search__star {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  color: var(--c-silver-dim);
+  border-radius: 50%;
+}
+.map-search__star.active { color: var(--c-fair); }
+.map-search__star:active { background: rgba(255,255,255,0.08); }
+.map-search__section-title {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--c-red);
+  font-weight: 700;
+}
 
 .map-categories {
   position: absolute;
@@ -490,11 +619,46 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .map-container .maplibregl-canvas {
   filter: invert(100%) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.55);
 }
-.map-marker--me {
-  width: 22px; height: 22px; border-radius: 50%;
-  background: var(--c-red); border: 3px solid #fff;
-  box-shadow: 0 0 0 6px rgba(216,31,42,0.28), 0 2px 8px rgba(0,0,0,0.6);
+/* Google-Maps-style "my location" marker: pulsing accuracy halo + blue dot
+ * + heading arrow. Pulse animates transform/opacity only (GPU compositing,
+ * no layout/paint thrash). */
+.gmarker { position: relative; width: 22px; height: 22px; }
+.gmarker__pulse {
+  position: absolute; left: 50%; top: 50%;
+  width: 22px; height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  background: var(--c-blue-dot);
+  opacity: 0.5;
+  animation: gmarkerPulse 2.4s cubic-bezier(.3,.6,.4,1) infinite;
+  will-change: transform, opacity;
 }
+@keyframes gmarkerPulse {
+  0% { transform: scale(0.6); opacity: 0.55; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.gmarker__dot {
+  position: absolute; left: 50%; top: 50%;
+  width: 16px; height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: var(--c-blue-dot);
+  border: 2.5px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.gmarker__arrow {
+  position: absolute; left: 50%; top: 50%;
+  width: 0; height: 0;
+  margin: -30px 0 0 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 12px solid var(--c-blue-dot);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  transform-origin: 50% 30px; /* pivot back at the dot's center, not the arrow's own box */
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+}
+
 .map-marker--poi {
   width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
   font-size: 14px; background: #1c1f23; border: 2px solid var(--c-red); border-radius: 50% 50% 50% 0;
@@ -539,6 +703,30 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   padding: 3px 8px;
   border-radius: 6px;
   border: 1px solid var(--c-border);
+}
+
+.resume-follow {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  z-index: 7;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--c-red);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 9px 16px;
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(216,31,42,0.4);
+  animation: resumeFollowIn 0.3s cubic-bezier(.2,.8,.2,1);
+}
+.resume-follow .icon { width: 14px; height: 14px; fill: #fff; }
+@keyframes resumeFollowIn {
+  from { transform: translateX(-50%) translateY(12px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 
 .nav-mode .map-categories,
@@ -590,8 +778,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   margin-bottom: 20px;
 }
 .history-summary__item {
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-border);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
   border-radius: var(--radius-md);
   padding: 12px;
   display: flex;
@@ -603,8 +794,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .history-list li {
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-border);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
   border-radius: var(--radius-md);
   padding: 12px 14px;
   display: flex;
@@ -617,8 +811,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .history-list__empty { text-align: center; color: var(--c-silver-dim); padding: 30px 0; font-size: 13px; }
 
 .settings-group {
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-border);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
   border-radius: var(--radius-lg);
   padding: 16px 16px 4px;
   margin-bottom: 16px;

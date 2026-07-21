@@ -16,9 +16,34 @@ export function startClock() {
   setInterval(tick, 1000 * 10);
 }
 
-export function setGpsChip(state) {
+const GPS_STATUS_LABELS = {
+  searching: 'Mencari Lokasi',
+  active: 'Lokasi Ditemukan',
+  weak: 'GPS Lemah',
+  lost: 'GPS Hilang',
+  denied: 'Izin GPS Ditolak',
+  unsupported: 'GPS Tidak Didukung',
+};
+
+const GPS_QUALITY_LABELS = {
+  excellent: 'Excellent',
+  good: 'Good',
+  fair: 'Fair',
+  poor: 'Poor',
+};
+
+export function gpsStatusLabel(status) {
+  return GPS_STATUS_LABELS[status] || '--';
+}
+
+export function gpsQualityLabel(quality) {
+  return quality ? GPS_QUALITY_LABELS[quality] || '--' : '--';
+}
+
+export function setGpsChip(state, quality) {
   const chip = document.getElementById('status-gps');
-  chip.dataset.state = state; // searching | active | denied | unsupported
+  chip.dataset.state = state; // searching | active | weak | lost | denied | unsupported
+  chip.title = quality ? `${gpsStatusLabel(state)} · ${gpsQualityLabel(quality)}` : gpsStatusLabel(state);
 }
 
 export function setBtChip(state) {
@@ -119,6 +144,36 @@ export function showToast(message, duration = 2200) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+/* ---------------- Perf utilities (reusable) ---------------- */
+export function debounce(fn, waitMs = 300) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), waitMs);
+  };
+}
+
+export function throttle(fn, waitMs = 200) {
+  let last = 0;
+  let pendingArgs = null;
+  let timer = null;
+  return (...args) => {
+    const now = Date.now();
+    const remaining = waitMs - (now - last);
+    if (remaining <= 0) {
+      last = now;
+      fn(...args);
+    } else {
+      pendingArgs = args;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        last = Date.now();
+        fn(...pendingArgs);
+      }, remaining);
+    }
+  };
 }
 
 /* ---------------- Formatting helpers ---------------- */

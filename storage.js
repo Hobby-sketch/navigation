@@ -11,7 +11,11 @@ const LS_KEYS = {
   TRIP_A: 'beatdash_tripA_km',
   TRIP_B: 'beatdash_tripB_km',
   SETTINGS: 'beatdash_settings',
+  SEARCH_HISTORY: 'beatdash_search_history',
+  FAVORITES: 'beatdash_favorites',
 };
+
+const MAX_SEARCH_HISTORY = 15;
 
 const IDB_NAME = 'beatdash-db';
 const IDB_VERSION = 1;
@@ -82,6 +86,57 @@ export const storage = {
     const s = this.getSettings();
     s[key] = value;
     this.setSettings(s);
+  },
+
+  /* ---------- generic JSON helpers (reused by history/favorites) ---------- */
+  getJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  },
+  setJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* storage unavailable, ignore */ }
+  },
+
+  /* ---------- search history (Riwayat Pencarian) ---------- */
+  getSearchHistory() {
+    return this.getJSON(LS_KEYS.SEARCH_HISTORY, []);
+  },
+  addSearchHistory(place) {
+    // place: { name, lat, lon }
+    const list = this.getSearchHistory().filter(
+      (p) => !(p.lat === place.lat && p.lon === place.lon)
+    );
+    list.unshift({ ...place, ts: Date.now() });
+    this.setJSON(LS_KEYS.SEARCH_HISTORY, list.slice(0, MAX_SEARCH_HISTORY));
+  },
+  clearSearchHistory() {
+    this.setJSON(LS_KEYS.SEARCH_HISTORY, []);
+  },
+
+  /* ---------- favorites (Favorit) ---------- */
+  getFavorites() {
+    return this.getJSON(LS_KEYS.FAVORITES, []);
+  },
+  isFavorite(lat, lon) {
+    return this.getFavorites().some((p) => p.lat === lat && p.lon === lon);
+  },
+  toggleFavorite(place) {
+    const list = this.getFavorites();
+    const idx = list.findIndex((p) => p.lat === place.lat && p.lon === place.lon);
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      this.setJSON(LS_KEYS.FAVORITES, list);
+      return false; // now un-favorited
+    }
+    list.unshift({ ...place, ts: Date.now() });
+    this.setJSON(LS_KEYS.FAVORITES, list);
+    return true; // now favorited
   },
 
   /* ---------- IndexedDB trip history ---------- */
