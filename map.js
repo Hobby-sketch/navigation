@@ -43,7 +43,7 @@ export const CATEGORY_EMOJI = {
 };
 
 /** Shared ease-out curve so every camera move (follow/fly/fit) feels the same. */
-function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+export function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
 /** Small equirectangular circle generator — good enough for accuracy rings
  *  of a few to a few hundred meters (no geodesic library needed). */

@@ -738,6 +738,8 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   right: 10px;
   z-index: 6;
   background: rgba(17,18,20,0.94);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--c-border-strong);
   border-radius: var(--radius-md);
   padding: 10px 14px;
@@ -745,6 +747,77 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   display: none;
 }
 .nav-mode .nav-instructions { display: block; }
+.nav-instructions__main { font-weight: 600; }
+.nav-instructions__stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+}
+.nav-stat { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.nav-stat strong { font-size: 15px; font-family: var(--font-mono); color: var(--c-white); }
+.nav-stat small { font-size: 9.5px; color: var(--c-silver-dim); letter-spacing: 0.5px; margin-top: 2px; }
+.nav-alternatives {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  overflow-x: auto;
+}
+.nav-alternatives__btn {
+  flex-shrink: 0;
+  background: var(--c-bg-card-2);
+  border: 1px solid var(--c-border-strong);
+  color: var(--c-silver);
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.nav-alternatives__btn.active { background: var(--c-red); border-color: var(--c-red); color: #fff; }
+
+/* ---------------- WEATHER STRIP ---------------- */
+.weather-strip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--c-silver);
+  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  border-radius: 999px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.weather-strip__icon { font-size: 15px; }
+.weather-strip__temp { font-family: var(--font-mono); font-weight: 700; color: var(--c-white); font-size: 13px; }
+.weather-strip__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weather-strip__sep { color: var(--c-silver-dim); }
+.weather-strip__meta { white-space: nowrap; font-size: 10.5px; }
+
+/* ---------------- TRAFFIC ---------------- */
+.map-btn--traffic.active { background: var(--c-red); }
+.map-btn--traffic.active .icon { fill: #fff; }
+.traffic-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 44px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  background: rgba(0,0,0,0.6);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--c-border);
+  color: var(--c-silver);
+}
 
 /* ============================================================
    FULL VIEWS: RIWAYAT / PENGATURAN
@@ -769,6 +842,13 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   background: var(--c-red);
   margin-top: 8px;
   border-radius: 2px;
+}
+.view__subtitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-silver);
+  margin: 22px 0 10px;
+  letter-spacing: 0.3px;
 }
 
 .history-summary {
@@ -838,6 +918,18 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 }
 .settings-row:first-of-type { border-top: none; }
 .settings-row input[type="range"] { width: 130px; accent-color: var(--c-red); }
+.settings-row--stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.settings-input {
+  width: 100%;
+  background: var(--c-bg-card-2);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--c-white);
+  font-size: 13px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+}
+.settings-input::placeholder { color: var(--c-silver-dim); font-family: var(--font-display); }
 .settings-note { font-size: 11.5px; color: var(--c-silver-dim); line-height: 1.6; padding: 10px 0 14px; }
 
 .segmented {

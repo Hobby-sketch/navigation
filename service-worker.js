@@ -5,7 +5,7 @@
  * calls, third-party scripts) passes straight through to the network.
  */
 
-const CACHE_VERSION = 'beatdash-v1';
+const CACHE_VERSION = 'beatdash-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -21,6 +21,9 @@ const APP_SHELL = [
   './storage.js',
   './bluetooth.js',
   './settings.js',
+  './traffic.js',
+  './weather.js',
+  './navigation.js',
   './manifest.json',
   './assets/images/honda-logo.png',
   './assets/icons/icon-72.png',

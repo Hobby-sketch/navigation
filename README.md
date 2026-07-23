@@ -15,6 +15,29 @@ Project ini sudah melalui satu putaran review/refactor tanpa mengubah struktur f
 
 Semua fitur lama (boot screen, speedometer, trip/odometer, kategori peta, bottom nav, dsb.) tetap berjalan seperti sebelumnya — perubahan di atas bersifat aditif dan backward-compatible.
 
+## Arsitektur Engine
+
+Project ini disusun sebagai kumpulan "engine" modular (tiap engine = satu file, satu tanggung jawab):
+
+| Engine | File | Peran |
+|---|---|---|
+| GPS Engine | `gps.js` | Kalman filter, smoothing, quality, status, dead-reckoning |
+| Motion Engine | `motion.js` | Kompas + kemiringan motor (accelerometer/gyroscope) |
+| Map Engine | `map.js` | Render peta, marker, search, kategori POI |
+| Navigation Engine | `navigation.js` | Rute alternatif, ETA, sisa jarak/waktu, auto-reroute, smart camera |
+| Traffic Engine | `traffic.js` | Overlay lalu lintas live (Adapter Pattern: HERE/TomTom/Mapbox) |
+| Weather Engine | `weather.js` | Cuaca minimalis (Open-Meteo, tanpa API key) |
+| Ride Engine | `trip.js` | Odometer/trip, statistik sesi, riwayat berkendara harian |
+| Storage Engine | `storage.js` | localStorage + IndexedDB, dipakai semua engine lain |
+| UI Engine | `ui.js` | Status bar, toast, switching view, util debounce/throttle |
+| — | `app.js` | Orkestrator: menghubungkan semua engine ke DOM |
+
+Setiap engine punya API `.on(callback)` untuk event dan tidak saling mengimpor kecuali lewat kontrak publik yang jelas (mis. `navigation.js` memakai `map.js`'s `easeOutCubic` dan `route` source, `traffic.js` memakai `map.mapManager.map` untuk menambah layer sendiri) — supaya provider/algoritma di satu engine bisa diganti tanpa menyentuh engine lain.
+
+### Traffic Engine — perlu API key sendiri
+
+HERE/TomTom/Mapbox Traffic adalah layanan berbayar. Karena aplikasi ini statis (GitHub Pages, tanpa backend), key harus diisi sendiri di **Pengaturan → Traffic Engine** dan hanya tersimpan di localStorage browser Anda — tidak pernah dikirim ke pihak lain selain provider yang dipilih. Tanpa key, tombol traffic di peta akan menampilkan pesan untuk mengisi key dulu.
+
 ## Deploy ke GitHub Pages
 
 1. Buat repo baru di GitHub, lalu push seluruh isi folder ini ke branch `main`.

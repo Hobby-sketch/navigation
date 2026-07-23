@@ -1,8 +1,8 @@
 /**
- * storage.js
- * Persistence layer for BeAT Dash.
+ * storage.js — Storage Engine
+ * Persistence layer for BeAT Dash, shared by every other engine.
  * - Simple key/value settings + running trip counters -> localStorage (fast, synchronous-ish).
- * - Trip history log (list of completed trips) -> IndexedDB (better for growing lists).
+ * - Trip-reset log + full ride-session log -> IndexedDB (better for growing lists).
  * Falls back gracefully if a storage API is unavailable (e.g. private browsing).
  */
 
@@ -13,13 +13,17 @@ const LS_KEYS = {
   SETTINGS: 'beatdash_settings',
   SEARCH_HISTORY: 'beatdash_search_history',
   FAVORITES: 'beatdash_favorites',
+  TRAFFIC_SETTINGS: 'beatdash_traffic_settings',
+  DAILY_TRIP: 'beatdash_daily_trip',
 };
 
 const MAX_SEARCH_HISTORY = 15;
+const MAX_DAILY_DAYS = 30;
 
 const IDB_NAME = 'beatdash-db';
-const IDB_VERSION = 1;
+const IDB_VERSION = 2;
 const IDB_STORE = 'trip_history';
+const IDB_RIDE_STORE = 'ride_sessions';
 
 let dbPromise = null;
 
@@ -36,11 +40,35 @@ function openDB() {
       if (!db.objectStoreNames.contains(IDB_STORE)) {
         db.createObjectStore(IDB_STORE, { keyPath: 'id', autoIncrement: true });
       }
+      if (!db.objectStoreNames.contains(IDB_RIDE_STORE)) {
+        db.createObjectStore(IDB_RIDE_STORE, { keyPath: 'id', autoIncrement: true });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
   });
   return dbPromise;
+}
+
+/** Generic "add newest-first, capped at `limit`, from any object store" reader. */
+function readAllFromStore(db, storeName, limit) {
+  return new Promise((resolve) => {
+    if (!db) { resolve([]); return; }
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const results = [];
+    const req = store.openCursor(null, 'prev');
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor && results.length < limit) {
+        results.push(cursor.value);
+        cursor.continue();
+      } else {
+        resolve(results);
+      }
+    };
+    req.onerror = () => resolve(results);
+  });
 }
 
 export const storage = {
@@ -139,7 +167,7 @@ export const storage = {
     return true; // now favorited
   },
 
-  /* ---------- IndexedDB trip history ---------- */
+  /* ---------- IndexedDB: trip-reset log (Trip A/B resets) ---------- */
   async addHistoryEntry(entry) {
     const db = await openDB();
     if (!db) return;
@@ -153,23 +181,7 @@ export const storage = {
 
   async getHistory(limit = 50) {
     const db = await openDB();
-    if (!db) return [];
-    return new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const results = [];
-      const req = store.openCursor(null, 'prev');
-      req.onsuccess = (e) => {
-        const cursor = e.target.result;
-        if (cursor && results.length < limit) {
-          results.push(cursor.value);
-          cursor.continue();
-        } else {
-          resolve(results);
-        }
-      };
-      req.onerror = () => resolve(results);
-    });
+    return readAllFromStore(db, IDB_STORE, limit);
   },
 
   async clearHistory() {
@@ -181,5 +193,72 @@ export const storage = {
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => resolve(false);
     });
+  },
+
+  /* ---------- IndexedDB: full ride-session log (Ride Engine) ---------- */
+  // session: { startedAt, endedAt, distanceKm, avgSpeedKmh, maxSpeedKmh, movingSec, stoppedSec }
+  async addRideSession(session) {
+    const db = await openDB();
+    if (!db) return;
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_RIDE_STORE, 'readwrite');
+      tx.objectStore(IDB_RIDE_STORE).add({ ...session, ts: Date.now() });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  },
+
+  async getRideSessions(limit = 50) {
+    const db = await openDB();
+    return readAllFromStore(db, IDB_RIDE_STORE, limit);
+  },
+
+  async clearRideSessions() {
+    const db = await openDB();
+    if (!db) return;
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_RIDE_STORE, 'readwrite');
+      tx.objectStore(IDB_RIDE_STORE).clear();
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  },
+
+  /* ---------- Traffic Engine settings (provider + user-supplied key) ---------- */
+  getTrafficSettings() {
+    return this.getJSON(LS_KEYS.TRAFFIC_SETTINGS, { enabled: false, provider: null, apiKeys: {} });
+  },
+  setTrafficSettings(obj) {
+    this.setJSON(LS_KEYS.TRAFFIC_SETTINGS, obj);
+  },
+  setTrafficApiKey(provider, apiKey) {
+    const s = this.getTrafficSettings();
+    s.apiKeys = s.apiKeys || {};
+    s.apiKeys[provider] = apiKey;
+    this.setTrafficSettings(s);
+  },
+
+  /* ---------- Daily trip (Ride Engine) — km driven per calendar day ---------- */
+  _todayKey() {
+    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (local-ish, good enough for a dashboard)
+  },
+  getDailyTripMap() {
+    return this.getJSON(LS_KEYS.DAILY_TRIP, {});
+  },
+  getTodayTripKm() {
+    const map = this.getDailyTripMap();
+    return map[this._todayKey()] || 0;
+  },
+  addDailyDistance(deltaKm) {
+    const map = this.getDailyTripMap();
+    const key = this._todayKey();
+    map[key] = (map[key] || 0) + deltaKm;
+    // prune old entries so this object never grows unbounded
+    const keys = Object.keys(map).sort();
+    if (keys.length > MAX_DAILY_DAYS) {
+      keys.slice(0, keys.length - MAX_DAILY_DAYS).forEach((k) => delete map[k]);
+    }
+    this.setJSON(LS_KEYS.DAILY_TRIP, map);
+    return map[key];
   },
 };
