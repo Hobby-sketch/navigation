@@ -1,613 +1,386 @@
-/**
- * app.js — main entry point.
- * Boots the app, then wires GPS, motion sensors, the speedometer, the map,
- * trip/odometer tracking, settings, and navigation between views.
- */
-
-import { runBootSequence } from './boot.js';
-import { GPSManager } from './gps.js';
-import { MotionManager } from './motion.js';
-import { Speedometer } from './speedometer.js';
-import { TripManager } from './trip.js';
-import { BluetoothStatus } from './bluetooth.js';
-import { MapManager, searchPlaces, searchCategory, CATEGORY_EMOJI } from './map.js';
-import { SettingsManager } from './settings.js';
-import { TrafficEngine, TRAFFIC_PROVIDERS } from './traffic.js';
-import { WeatherEngine } from './weather.js';
-import { NavigationEngine, formatEta, formatClockTime } from './navigation.js';
-import { storage } from './storage.js';
-import {
-  startClock, setGpsChip, setBtChip, initNetworkStatus, initBatteryStatus,
-  switchView, showToast, fmtKm, compassLabel, gpsStatusLabel, debounce, throttle,
-} from './ui.js';
-
-let userLat = null;
-let userLng = null;
-let currentHeading = null;
-let pendingDestination = null;
-let activeCategory = null;
-
-const gps = new GPSManager();
-const motion = new MotionManager();
-const speedo = new Speedometer({ unit: storage.getSettings().unit || 'kmh' });
-const trip = new TripManager();
-const bt = new BluetoothStatus();
-const map = new MapManager('map-container');
-const traffic = new TrafficEngine(map);
-const weather = new WeatherEngine();
-const navEngine = new NavigationEngine(map);
-
-/* ---------------- GPS wiring (Smart GPS Engine) ---------------- */
-const gpsBanner = document.getElementById('gps-banner');
-const gpsBannerText = document.getElementById('gps-banner-text');
-const qualityEl = document.getElementById('val-gps-quality');
-
-function renderGpsStatus(status, quality) {
-  setGpsChip(status, quality);
-  const showBanner = status === 'searching' || status === 'weak' || status === 'lost' || status === 'denied' || status === 'unsupported';
-  gpsBanner.hidden = !showBanner;
-  if (showBanner) {
-    gpsBanner.dataset.status = status;
-    gpsBannerText.textContent = gpsStatusLabel(status);
-  }
-}
-
-gps.on((data) => {
-  if (data.kind === 'status') {
-    renderGpsStatus(data.status, gps.quality);
-    return;
-  }
-
-  renderGpsStatus(data.status, data.quality);
-
-  // "predicted" ticks (dead-reckoning between real fixes) only move the map
-  // marker smoothly — they must never touch trip/odometer or hit the DOM
-  // heavily, to keep this at rAF rate without layout thrashing.
-  if (data.kind === 'predicted') {
-    map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving);
-    return;
-  }
-
-  // Real "fix": a usable position is either a clean ('active') or a noisy
-  // but still valid ('weak') reading — both update trip/UI, just flagged
-  // differently in the status chip/banner above.
-  if (data.status !== 'active' && data.status !== 'weak') return;
-
-  userLat = data.latitude;
-  userLng = data.longitude;
-
-  speedo.setSpeedKmh(data.speedKmh);
-  trip.update(data.latitude, data.longitude, data.accuracy, data.speedKmh, data.isMoving);
-  map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving);
-
-  weather.maybeRefresh(data.latitude, data.longitude);
-  navEngine.update(data.latitude, data.longitude, data.speedKmh);
-  traffic.onMotionUpdate(data.isMoving);
-
-  document.getElementById('val-altitude').textContent =
-    data.altitude !== null ? `${Math.round(data.altitude)} m` : '-- m';
-  document.getElementById('val-accuracy').textContent =
-    data.accuracy !== null ? `± ${Math.round(data.accuracy)} m` : '± -- m';
-  document.getElementById('val-satellites').textContent =
-    data.satelliteEstimate !== null ? String(data.satelliteEstimate) : '--';
-  qualityEl.textContent = data.quality ? data.quality[0].toUpperCase() + data.quality.slice(1) : '--';
-  qualityEl.dataset.quality = data.quality || '';
-
-  if (currentHeading === null && data.heading !== null) {
-    updateHeadingUI(data.heading);
-  }
-});
-
-/* ---------------- Motion (compass + lean) wiring ---------------- */
-function updateHeadingUI(heading) {
-  currentHeading = heading;
-  document.getElementById('val-heading').textContent = `${compassLabel(heading)} ${Math.round(heading)}°`;
-}
-
-motion.on((evt) => {
-  if (evt.type === 'heading') {
-    updateHeadingUI(evt.heading);
-  } else if (evt.type === 'lean') {
-    renderLean(evt.roll, evt.pitch);
-  }
-});
-
-function renderLean(roll, pitch) {
-  const panel = document.getElementById('lean-panel');
-  const rollEl = document.getElementById('val-roll');
-  const pitchEl = document.getElementById('val-pitch');
-  const rollDirEl = document.getElementById('val-roll-dir');
-  const pitchDirEl = document.getElementById('val-pitch-dir');
-  const bikeGroup = document.getElementById('lean-bike-group');
-
-  const absRoll = Math.abs(roll);
-  rollEl.textContent = `${absRoll.toFixed(0)}°`;
-  pitchEl.textContent = `${Math.abs(pitch).toFixed(0)}°`;
-
-  rollDirEl.textContent = roll > 3 ? 'KANAN' : roll < -3 ? 'KIRI' : 'SEIMBANG';
-  pitchDirEl.textContent = pitch > 3 ? 'NAIK' : pitch < -3 ? 'TURUN' : 'DATAR';
-
-  let state = 'safe';
-  if (absRoll >= 30) state = 'danger';
-  else if (absRoll >= 15) state = 'warn';
-  panel.dataset.state = state;
-
-  const clampedRoll = Math.max(-45, Math.min(45, roll));
-  bikeGroup.style.transform = `rotate(${clampedRoll}deg)`;
-}
-
-/* ---------------- Trip / odometer wiring ---------------- */
-function renderTrip(state) {
-  document.getElementById('val-odometer').textContent = fmtKm(state.odometerKm);
-  document.getElementById('val-tripa').textContent = fmtKm(state.tripAKm);
-  document.getElementById('val-tripb').textContent = fmtKm(state.tripBKm);
-}
-trip.on(renderTrip);
-renderTrip(trip.getState());
-
-document.getElementById('btn-reset-tripa').addEventListener('click', async () => {
-  await trip.resetTripA();
-  showToast('Trip A direset');
-});
-document.getElementById('btn-reset-tripb').addEventListener('click', async () => {
-  await trip.resetTripB();
-  showToast('Trip B direset');
-});
-
-/* ---------------- Bluetooth status ---------------- */
-bt.on((state) => setBtChip(state));
-
-/* ---------------- Weather Engine ---------------- */
-const weatherEls = {
-  icon: document.getElementById('weather-icon'),
-  temp: document.getElementById('weather-temp'),
-  label: document.getElementById('weather-label'),
-  wind: document.getElementById('weather-wind'),
-  rain: document.getElementById('weather-rain'),
-};
-weather.on((evt) => {
-  if (evt.type !== 'update') return;
-  const w = evt.weather;
-  weatherEls.icon.textContent = w.icon;
-  weatherEls.temp.textContent = `${w.tempC}°`;
-  weatherEls.label.textContent = w.label;
-  weatherEls.wind.textContent = w.windKmh;
-  weatherEls.rain.textContent = w.rainChance !== null ? w.rainChance : '--';
-});
-
-/* ---------------- Map: search (with autocomplete, riwayat & favorit) ---------------- */
-const searchInput = document.getElementById('map-search-input');
-const searchResultsEl = document.getElementById('map-search-results');
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str || '';
-  return div.innerHTML;
-}
-
-function selectPlace(name, lat, lon) {
-  pendingDestination = { lat, lon, name };
-  map.setDestination(lat, lon);
-  map.flyTo(lat, lon);
-  searchResultsEl.classList.remove('show');
-  searchInput.value = name;
-  storage.addSearchHistory({ name, lat, lon });
-  showToast(`Tujuan: ${name}`);
-}
-
-/** Shown when the search box is focused and empty: quick access to recent
- *  searches and saved favorites (persisted via storage.js). */
-function renderSuggestions() {
-  const history = storage.getSearchHistory();
-  const favorites = storage.getFavorites();
-  if (!history.length && !favorites.length) {
-    searchResultsEl.classList.remove('show');
-    return;
-  }
-  const rowsHtml = (items, favSet) => items.map((p) => {
-    const isFav = favSet.has(`${p.lat},${p.lon}`);
-    return `<div class="map-search__result" data-lat="${p.lat}" data-lon="${p.lon}" data-name="${escapeHtml(p.name)}">
-      <span class="map-search__result-text">${escapeHtml(p.name)}</span>
-      <button type="button" class="map-search__star ${isFav ? 'active' : ''}" data-fav-name="${escapeHtml(p.name)}">★</button>
-    </div>`;
-  }).join('');
-
-  const favKeySet = new Set(favorites.map((f) => `${f.lat},${f.lon}`));
-  let html = '';
-  if (favorites.length) html += `<div class="map-search__section-title">Favorit</div>${rowsHtml(favorites, favKeySet)}`;
-  if (history.length) html += `<div class="map-search__section-title">Riwayat Pencarian</div>${rowsHtml(history, favKeySet)}`;
-  searchResultsEl.innerHTML = html;
-  searchResultsEl.classList.add('show');
-  bindResultRows();
-}
-
-function renderSearchResults(results) {
-  if (!results.length) {
-    searchResultsEl.innerHTML = '<div class="map-search__result"><span class="map-search__result-text">Tidak ada hasil</span></div>';
-    searchResultsEl.classList.add('show');
-    return;
-  }
-  const favorites = storage.getFavorites();
-  const favKeySet = new Set(favorites.map((f) => `${f.lat},${f.lon}`));
-  searchResultsEl.innerHTML = results.map((r) => {
-    const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
-    const name = r.display_name.split(',')[0];
-    const isFav = favKeySet.has(`${lat},${lon}`);
-    return `<div class="map-search__result" data-lat="${lat}" data-lon="${lon}" data-name="${escapeHtml(name)}">
-      <span class="map-search__result-text">${escapeHtml(name)}<small>${escapeHtml(r.display_name)}</small></span>
-      <button type="button" class="map-search__star ${isFav ? 'active' : ''}" data-fav-name="${escapeHtml(name)}">★</button>
-    </div>`;
-  }).join('');
-  searchResultsEl.classList.add('show');
-  bindResultRows();
-}
-
-function bindResultRows() {
-  searchResultsEl.querySelectorAll('.map-search__result[data-lat]').forEach((el) => {
-    const lat = parseFloat(el.dataset.lat), lon = parseFloat(el.dataset.lon), name = el.dataset.name;
-    el.querySelector('.map-search__result-text')?.addEventListener('click', () => selectPlace(name, lat, lon));
-    el.querySelector('.map-search__star')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const nowFav = storage.toggleFavorite({ name, lat, lon });
-      e.currentTarget.classList.toggle('active', nowFav);
-      showToast(nowFav ? `Ditambahkan ke favorit` : `Dihapus dari favorit`);
-    });
-  });
-}
-
-const runSearch = debounce(async (q) => {
-  const results = await searchPlaces(q, { lat: userLat, lng: userLng });
-  renderSearchResults(results);
-}, 350);
-
-searchInput.addEventListener('input', () => {
-  const q = searchInput.value.trim();
-  if (q.length < 3) {
-    if (q.length === 0) renderSuggestions();
-    else searchResultsEl.classList.remove('show');
-    return;
-  }
-  runSearch(q);
-});
-
-searchInput.addEventListener('focus', () => {
-  if (searchInput.value.trim().length === 0) renderSuggestions();
-});
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.map-search')) searchResultsEl.classList.remove('show');
-});
-
-/* ---------------- Map: category chips ---------------- */
-const runCategorySearch = throttle(async (cat) => {
-  if (userLat === null) {
-    showToast('Menunggu sinyal GPS...');
-    return;
-  }
-  map.clearPois();
-  showToast(`Mencari ${cat}...`);
-  const results = await searchCategory(cat, userLat, userLng);
-  if (!results.length) {
-    showToast(`Tidak ditemukan ${cat} di sekitar`);
-    return;
-  }
-  results.forEach((p) => map.addPoiMarker(p.lat, p.lon, p.name, CATEGORY_EMOJI[cat]));
-  showToast(`${results.length} ${cat} ditemukan`);
-}, 1200);
-
-document.getElementById('map-categories').addEventListener('click', (e) => {
-  const btn = e.target.closest('.chip');
-  if (!btn) return;
-  const cat = btn.dataset.cat;
-
-  document.querySelectorAll('#map-categories .chip').forEach((c) => c.classList.toggle('active', c === btn && activeCategory !== cat));
-
-  if (activeCategory === cat) {
-    activeCategory = null;
-    map.clearPois();
-    btn.classList.remove('active');
-    return;
-  }
-  activeCategory = cat;
-  runCategorySearch(cat);
-});
-
-/* ---------------- Map: controls (Follow GPS + Kembali Ikuti) ---------------- */
-document.getElementById('btn-zoom-in').addEventListener('click', () => map.zoomIn());
-document.getElementById('btn-zoom-out').addEventListener('click', () => map.zoomOut());
-
-const locateBtn = document.getElementById('btn-locate');
-const resumeFollowBtn = document.getElementById('btn-resume-follow');
-
-locateBtn.addEventListener('click', () => {
-  map.toggleFollow(!map.isFollowing());
-});
-
-resumeFollowBtn.addEventListener('click', () => {
-  map.toggleFollow(true);
-});
-
-// Single source of truth for the Follow GPS UI: the map emits this whenever
-// following starts/stops, whether triggered by a button or by the user
-// dragging/zooming/rotating the map themselves.
-map.on((evt) => {
-  if (evt.type !== 'follow-change') return;
-  locateBtn.classList.toggle('active', evt.following);
-  resumeFollowBtn.hidden = evt.following;
-  if (userLat !== null) showToast(evt.following ? 'Mengikuti lokasi GPS' : 'Berhenti mengikuti lokasi');
-});
-
-/* ---------------- Traffic Engine ---------------- */
-const trafficBtn = document.getElementById('btn-traffic');
-const trafficLegend = document.getElementById('traffic-legend');
-const trafficEnabledToggle = document.getElementById('setting-traffic-enabled');
-const trafficProviderGroup = document.getElementById('setting-traffic-provider');
-const trafficApiKeyInput = document.getElementById('setting-traffic-apikey');
-
-function currentTrafficProvider() {
-  return trafficProviderGroup.querySelector('.segmented__btn.active')?.dataset.provider || TRAFFIC_PROVIDERS[0];
-}
-
-async function applyTrafficState(enabled) {
-  const settings = storage.getTrafficSettings();
-  if (enabled && !traffic.hasAnyProviderConfigured(settings.apiKeys)) {
-    showToast('Isi API key provider traffic di Pengaturan dulu');
-    trafficEnabledToggle.checked = false;
-    settings.enabled = false;
-    storage.setTrafficSettings(settings);
-    return;
-  }
-  if (enabled) await traffic.enable(settings.apiKeys);
-  else traffic.disable();
-}
-
-trafficBtn.addEventListener('click', () => {
-  const settings = storage.getTrafficSettings();
-  const next = !traffic.enabled;
-  settings.enabled = next;
-  storage.setTrafficSettings(settings);
-  trafficEnabledToggle.checked = next;
-  applyTrafficState(next);
-});
-
-trafficEnabledToggle.addEventListener('change', () => {
-  const settings = storage.getTrafficSettings();
-  settings.enabled = trafficEnabledToggle.checked;
-  storage.setTrafficSettings(settings);
-  applyTrafficState(trafficEnabledToggle.checked);
-});
-
-trafficProviderGroup.querySelectorAll('.segmented__btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    trafficProviderGroup.querySelectorAll('.segmented__btn').forEach((b) => b.classList.toggle('active', b === btn));
-    const settings = storage.getTrafficSettings();
-    settings.provider = btn.dataset.provider;
-    storage.setTrafficSettings(settings);
-    trafficApiKeyInput.value = settings.apiKeys?.[btn.dataset.provider] || '';
-  });
-});
-
-trafficApiKeyInput.addEventListener('change', () => {
-  storage.setTrafficApiKey(currentTrafficProvider(), trafficApiKeyInput.value.trim());
-  if (traffic.enabled) applyTrafficState(true); // re-enable with the fresh key
-});
-
-traffic.on((evt) => {
-  if (evt.type === 'enabled') {
-    trafficBtn.classList.add('active');
-    trafficLegend.hidden = false;
-    showToast(`Traffic aktif (${evt.provider.toUpperCase()}${evt.fallback ? ' — fallback' : ''})`);
-  } else if (evt.type === 'disabled') {
-    trafficBtn.classList.remove('active');
-    trafficLegend.hidden = true;
-  } else if (evt.type === 'error') {
-    trafficBtn.classList.remove('active');
-    trafficLegend.hidden = true;
-    trafficEnabledToggle.checked = false;
-    showToast(evt.reason === 'no-provider'
-      ? 'Belum ada API key traffic yang diisi'
-      : 'Semua provider traffic gagal dimuat');
-  }
-});
-
-// Restore persisted traffic settings on boot.
-(function restoreTrafficSettings() {
-  const settings = storage.getTrafficSettings();
-  const provider = settings.provider || TRAFFIC_PROVIDERS[0];
-  trafficProviderGroup.querySelectorAll('.segmented__btn').forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
-  trafficApiKeyInput.value = settings.apiKeys?.[provider] || '';
-  trafficEnabledToggle.checked = !!settings.enabled;
-})();
-
-/* ---------------- Navigation Engine wiring ---------------- */
-const navTextEl = document.getElementById('nav-instructions-text');
-const navStatsEl = document.getElementById('nav-instructions-stats');
-const navRemainingEl = document.getElementById('nav-remaining');
-const navEtaEl = document.getElementById('nav-eta');
-const navArrivalEl = document.getElementById('nav-arrival');
-const navAltEl = document.getElementById('nav-alternatives');
-
-function renderAlternatives() {
-  if (!navEngine.alternatives.length) { navAltEl.hidden = true; navAltEl.innerHTML = ''; return; }
-  navAltEl.hidden = false;
-  navAltEl.innerHTML = navEngine.alternatives.map((alt, i) => {
-    const km = (alt.distanceM / 1000).toFixed(1);
-    const min = Math.round(alt.durationS / 60);
-    return `<button type="button" class="nav-alternatives__btn" data-idx="${i}">Rute ${i + 2} · ${km} km · ${min} mnt</button>`;
-  }).join('');
-  navAltEl.querySelectorAll('.nav-alternatives__btn').forEach((btn) => {
-    btn.addEventListener('click', () => navEngine.selectAlternative(Number(btn.dataset.idx)));
-  });
-}
-
-navEngine.on((evt) => {
-  if (evt.type === 'route-ready') {
-    const km = (evt.route.distanceM / 1000).toFixed(1);
-    const min = Math.round(evt.route.durationS / 60);
-    navTextEl.textContent = `${pendingDestination?.name || 'Tujuan'} — ${km} km · ${min} menit`;
-    renderAlternatives();
-  } else if (evt.type === 'routing-failed') {
-    navTextEl.textContent = 'Rute tidak ditemukan. Coba lagi.';
-    navStatsEl.hidden = true;
-  } else if (evt.type === 'progress') {
-    navStatsEl.hidden = false;
-    navRemainingEl.textContent = `${evt.remainingKm.toFixed(1)} km`;
-    navEtaEl.textContent = formatEta(evt.etaSec);
-    navArrivalEl.textContent = formatClockTime(evt.arrival);
-  } else if (evt.type === 'rerouting') {
-    showToast('GPS keluar dari rute — mencari rute baru...');
-  } else if (evt.type === 'rerouted') {
-    showToast('Rute diperbarui');
-  } else if (evt.type === 'arrived') {
-    showToast('Anda telah tiba di tujuan');
-    navStatsEl.hidden = true;
-    navAltEl.hidden = true;
-    navTextEl.textContent = 'Cari tujuan untuk memulai navigasi';
-    pendingDestination = null;
-  }
-});
-
-/* ---------------- Bottom navigation ---------------- */
-document.querySelectorAll('.bottomnav__item').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    switchView(btn.dataset.view, { onEnter: onViewEnter });
-  });
-});
-
-async function onViewEnter(view) {
-  if (view === 'navigasi') {
-    if (pendingDestination && userLat !== null) {
-      navTextEl.textContent = `Menghitung rute ke ${pendingDestination.name}...`;
-      navStatsEl.hidden = true;
-      await navEngine.startTo(pendingDestination.lat, pendingDestination.lon, pendingDestination.name, userLat, userLng);
-    } else {
-      navTextEl.textContent = 'Cari tujuan untuk memulai navigasi';
-    }
-  } else if (view === 'riwayat') {
-    renderHistoryView();
-  }
-}
-
-function formatDuration(sec) {
-  const s = Math.max(0, Math.round(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-}
-
-async function renderHistoryView() {
-  const state = trip.getState();
-  document.getElementById('hist-odometer').textContent = fmtKm(state.odometerKm);
-  document.getElementById('hist-tripa').textContent = fmtKm(state.tripAKm);
-  document.getElementById('hist-tripb').textContent = fmtKm(state.tripBKm);
-  document.getElementById('hist-today').textContent = fmtKm(state.todayKm);
-
-  const session = trip.getSessionStats();
-  document.getElementById('hist-avgspeed').textContent = `${session.avgSpeedKmh.toFixed(0)} km/h`;
-  document.getElementById('hist-maxspeed').textContent = `${session.maxSpeedKmh.toFixed(0)} km/h`;
-  document.getElementById('hist-duration').textContent = formatDuration(session.durationSec);
-  document.getElementById('hist-moving').textContent = formatDuration(session.movingSec);
-  document.getElementById('hist-stopped').textContent = formatDuration(session.stoppedSec);
-
-  const list = document.getElementById('history-list');
-  const entries = await storage.getHistory();
-  if (!entries.length) {
-    list.innerHTML = '<li class="history-list__empty">Belum ada riwayat perjalanan tersimpan.</li>';
-  } else {
-    list.innerHTML = entries.map((e) => {
-      const date = new Date(e.ts);
-      const dateStr = date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-      const timeStr = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      return `<li><div><div class="h-dist">${e.label}</div><div class="h-date">${dateStr}, ${timeStr}</div></div><div class="h-dist">${e.distanceKm.toFixed(1)} km</div></li>`;
-    }).join('');
-  }
-
-  const rideList = document.getElementById('ride-history-list');
-  const rides = await trip.getRideHistory();
-  if (!rides.length) {
-    rideList.innerHTML = '<li class="history-list__empty">Belum ada sesi berkendara tersimpan.</li>';
-  } else {
-    rideList.innerHTML = rides.map((r) => {
-      const date = new Date(r.ts);
-      const dateStr = date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-      const timeStr = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      return `<li><div><div class="h-dist">${r.distanceKm.toFixed(1)} km · avg ${r.avgSpeedKmh.toFixed(0)} km/h</div><div class="h-date">${dateStr}, ${timeStr}</div></div><div class="h-dist">${formatDuration(r.movingSec + r.stoppedSec)}</div></li>`;
-    }).join('');
-  }
-}
-
-/* ---------------- Settings ---------------- */
-const settings = new SettingsManager({
-  onUnitChange: (unit) => speedo.setUnit(unit),
-  onResetOdometer: () => trip.resetOdometer(),
-  onClearHistory: async () => { await storage.clearHistory(); renderHistoryView(); },
-});
-
-document.getElementById('btn-end-session').addEventListener('click', async () => {
-  const stats = await trip.endSession();
-  if (stats.distanceKm >= 0.05) showToast(`Sesi disimpan: ${stats.distanceKm.toFixed(1)} km`);
-  else showToast('Sesi terlalu pendek untuk disimpan');
-  renderHistoryView();
-});
-
-document.getElementById('btn-clear-ride-history').addEventListener('click', async () => {
-  const ok = window.confirm('Hapus semua riwayat berkendara?');
-  if (ok) {
-    await trip.clearRideHistory();
-    showToast('Riwayat berkendara dihapus');
-    renderHistoryView();
-  }
-});
-
-/* ---------------- Sensor bootstrap ---------------- */
-function startSensors() {
-  gps.start();
-  bt.start();
-  speedo.start();
-}
-
-function initMotionGate() {
-  if (motion.needsPermission) {
-    const gate = () => {
-      motion.requestPermission().then((granted) => {
-        if (granted) motion.start();
-        else showToast('Izin sensor kemiringan & kompas ditolak');
-      });
-      document.removeEventListener('click', gate);
-      document.removeEventListener('touchstart', gate);
-    };
-    document.addEventListener('click', gate, { once: true });
-    document.addEventListener('touchstart', gate, { once: true });
-    showToast('Ketuk layar untuk mengaktifkan sensor kompas & kemiringan');
-  } else {
-    motion.start();
-  }
-}
-
-/* ---------------- Service worker ---------------- */
-function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./service-worker.js').catch((e) => console.warn('SW register failed', e));
-    });
-  }
-}
-
-/* ---------------- Boot ---------------- */
-(async function main() {
-  startClock();
-  initNetworkStatus();
-  initBatteryStatus();
-  registerServiceWorker();
-
-  await runBootSequence({ durationMs: 2600 });
-
-  startSensors();
-  initMotionGate();
-
-  const trafficSettings = storage.getTrafficSettings();
-  if (trafficSettings.enabled && traffic.hasAnyProviderConfigured(trafficSettings.apiKeys)) {
-    traffic.enable(trafficSettings.apiKeys);
-  }
-})();
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>BeAT Dash — GPS Speedometer</title>
+<meta name="description" content="Dashboard speedometer GPS premium untuk Honda BeAT. Berbasis sensor smartphone.">
+<meta name="theme-color" content="#0a0a0a">
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- BOOT SCREEN                                                    -->
+<!-- ============================================================ -->
+<div id="boot-screen" class="boot-screen">
+  <div class="boot-glow"></div>
+  <div class="boot-logo-wrap">
+    <img src="assets/images/honda-logo.png" alt="Honda" class="boot-logo" id="boot-logo">
+  </div>
+  <div class="boot-progress-track">
+    <div class="boot-progress-fill" id="boot-progress-fill"></div>
+  </div>
+  <div class="boot-text">Initializing System<span class="boot-dots">...</span></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APP SHELL                                                      -->
+<!-- ============================================================ -->
+<div id="app" class="app app--hidden">
+
+  <!-- STATUS BAR -->
+  <header class="statusbar surface-premium">
+    <div class="statusbar__left">
+      <span class="statusbar__clock" id="clock">00:00</span>
+    </div>
+    <div class="statusbar__right">
+      <span class="status-chip" id="status-gps" data-state="searching" title="Status GPS">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>
+        <span class="gps-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      </span>
+      <span class="status-chip" id="status-bt" data-state="off" title="Bluetooth">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12.9 2v7.4L9.2 6.2 8 7.4l4.9 4.6L8 16.6l1.2 1.2 3.7-3.5V22l5.4-5.1-4-3.9 4-3.9L12.9 2zm1.5 3.5 1.9 1.8-1.9 1.8V5.5zm0 9.5 1.9 1.7-1.9 1.8v-3.5z"/></svg>
+      </span>
+      <span class="status-chip" id="status-wifi" data-state="off" title="WiFi">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 20a1.6 1.6 0 1 1 0-3.2A1.6 1.6 0 0 1 12 20zm-4.2-4.9a6 6 0 0 1 8.4 0l-1.5 1.5a4 4 0 0 0-5.4 0zm-3-3.4a10.4 10.4 0 0 1 14.4 0l-1.5 1.5a8.2 8.2 0 0 0-11.4 0z"/></svg>
+      </span>
+      <span class="status-chip status-chip--brightness" id="status-brightness" title="Kecerahan">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0-5v2m0 16v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2m16 0h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+        <span id="brightness-value">AUTO</span>
+      </span>
+      <span class="status-chip status-chip--battery" id="status-battery" title="Baterai">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M17 5h-1V4a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v1H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/></svg>
+        <span id="battery-value">--%</span>
+      </span>
+    </div>
+  </header>
+
+  <!-- MAIN DASHBOARD -->
+  <main class="dashboard" id="view-home">
+
+    <!-- LEFT PANEL 40% -->
+    <section class="panel panel--gauge surface-premium" aria-label="Speedometer dan sensor">
+
+      <!-- Analog + digital speedometer -->
+      <div class="speedo" id="speedo">
+        <svg viewBox="0 0 300 300" class="speedo__svg" id="speedo-svg">
+          <defs>
+            <linearGradient id="needleGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#ff4d4d"/>
+              <stop offset="100%" stop-color="#b3001b"/>
+            </linearGradient>
+          </defs>
+          <circle cx="150" cy="150" r="140" class="speedo__ring-bg"/>
+          <path id="speedo-arc-bg" class="speedo__arc-bg"/>
+          <path id="speedo-arc-fill" class="speedo__arc-fill"/>
+          <g id="speedo-ticks"></g>
+          <g id="speedo-labels"></g>
+          <g id="speedo-needle">
+            <line x1="150" y1="150" x2="150" y2="45" class="speedo__needle" stroke="url(#needleGrad)"/>
+            <circle cx="150" cy="150" r="9" class="speedo__hub"/>
+          </g>
+        </svg>
+        <div class="speedo__digital">
+          <span class="speedo__value" id="speed-value">0</span>
+          <span class="speedo__unit" id="speed-unit">km/h</span>
+        </div>
+      </div>
+
+      <div class="gps-banner" id="gps-banner" hidden>
+        <span class="gps-banner__dot"></span>
+        <span id="gps-banner-text">Mencari Lokasi...</span>
+      </div>
+
+      <!-- Sensor info cards row 1 -->
+      <div class="cardgrid">
+        <div class="mini-card">
+          <span class="mini-card__label">HEADING</span>
+          <span class="mini-card__value" id="val-heading">-- --°</span>
+        </div>
+        <div class="mini-card">
+          <span class="mini-card__label">ALTITUDE</span>
+          <span class="mini-card__value" id="val-altitude">-- m</span>
+        </div>
+        <div class="mini-card">
+          <span class="mini-card__label">GPS ACCURACY</span>
+          <span class="mini-card__value" id="val-accuracy">± -- m</span>
+          <span class="mini-card__quality" id="val-gps-quality" data-quality="">--</span>
+        </div>
+        <div class="mini-card">
+          <span class="mini-card__label">SATELLITES</span>
+          <span class="mini-card__value" id="val-satellites">--</span>
+        </div>
+      </div>
+
+      <!-- Lean angle panel -->
+      <div class="lean-panel" id="lean-panel" data-state="safe">
+        <div class="lean-panel__visual">
+          <svg viewBox="0 0 140 140" id="lean-bike-svg" class="lean-bike">
+            <g id="lean-bike-group">
+              <rect x="60" y="30" width="20" height="80" rx="8" class="lean-bike__body"/>
+              <circle cx="70" cy="118" r="14" class="lean-bike__wheel"/>
+              <rect x="40" y="26" width="60" height="10" rx="5" class="lean-bike__bar"/>
+            </g>
+            <line x1="10" y1="124" x2="130" y2="124" class="lean-bike__ground"/>
+          </svg>
+        </div>
+        <div class="lean-panel__data">
+          <div class="lean-stat">
+            <span class="lean-stat__label">ROLL</span>
+            <span class="lean-stat__value" id="val-roll">0°</span>
+            <span class="lean-stat__dir" id="val-roll-dir">SEIMBANG</span>
+          </div>
+          <div class="lean-stat">
+            <span class="lean-stat__label">PITCH</span>
+            <span class="lean-stat__value" id="val-pitch">0°</span>
+            <span class="lean-stat__dir" id="val-pitch-dir">DATAR</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Odometer / Trip -->
+      <div class="cardgrid cardgrid--trip">
+        <div class="mini-card">
+          <span class="mini-card__label">ODOMETER</span>
+          <span class="mini-card__value" id="val-odometer">0.0 km</span>
+        </div>
+        <div class="mini-card mini-card--resettable">
+          <span class="mini-card__label">TRIP A</span>
+          <span class="mini-card__value" id="val-tripa">0.0 km</span>
+          <button class="mini-card__reset" id="btn-reset-tripa" aria-label="Reset Trip A">RESET</button>
+        </div>
+        <div class="mini-card mini-card--resettable">
+          <span class="mini-card__label">TRIP B</span>
+          <span class="mini-card__value" id="val-tripb">0.0 km</span>
+          <button class="mini-card__reset" id="btn-reset-tripb" aria-label="Reset Trip B">RESET</button>
+        </div>
+      </div>
+
+      <div class="weather-strip" id="weather-strip">
+        <span class="weather-strip__icon" id="weather-icon">🌡️</span>
+        <span class="weather-strip__temp" id="weather-temp">--°</span>
+        <span class="weather-strip__label" id="weather-label">Memuat cuaca...</span>
+        <span class="weather-strip__sep">·</span>
+        <span class="weather-strip__meta">💨 <span id="weather-wind">--</span> km/h</span>
+        <span class="weather-strip__meta">☔ <span id="weather-rain">--</span>%</span>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL 60% -->
+    <section class="panel panel--map" aria-label="Peta navigasi">
+      <div class="map-brand">Be<span>AT</span></div>
+
+      <div class="map-search">
+        <svg viewBox="0 0 24 24" class="icon map-search__icon"><path d="M10 4a6 6 0 1 0 3.8 10.7l4.75 4.75 1.4-1.4-4.75-4.75A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>
+        <input type="text" id="map-search-input" placeholder="Cari lokasi..." autocomplete="off">
+        <div class="map-search__results" id="map-search-results"></div>
+      </div>
+
+      <div class="map-categories" id="map-categories">
+        <button class="chip" data-cat="pabrik">🏭 Pabrik</button>
+        <button class="chip" data-cat="kantor">🏢 Kantor</button>
+        <button class="chip" data-cat="spbu">⛽ SPBU</button>
+        <button class="chip" data-cat="rumah sakit">🏥 Rumah Sakit</button>
+        <button class="chip" data-cat="hotel">🏨 Hotel</button>
+        <button class="chip" data-cat="restoran">🍽️ Restoran</button>
+        <button class="chip" data-cat="atm">🏧 ATM</button>
+        <button class="chip" data-cat="bengkel">🔧 Bengkel</button>
+        <button class="chip" data-cat="parkir">🅿️ Parkir</button>
+      </div>
+
+      <div class="nav-instructions" id="nav-instructions">
+        <div class="nav-instructions__main">
+          <span id="nav-instructions-text">Cari tujuan untuk memulai navigasi</span>
+        </div>
+        <div class="nav-instructions__stats" id="nav-instructions-stats" hidden>
+          <span class="nav-stat"><strong id="nav-remaining">-- km</strong><small>Sisa Jarak</small></span>
+          <span class="nav-stat"><strong id="nav-eta">-- menit</strong><small>ETA</small></span>
+          <span class="nav-stat"><strong id="nav-arrival">--:--</strong><small>Tiba</small></span>
+        </div>
+        <div class="nav-alternatives" id="nav-alternatives" hidden></div>
+      </div>
+
+      <div id="map-container" class="map-container"></div>
+
+      <button class="resume-follow" id="btn-resume-follow" hidden>
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 2 4.5 20l7.5-4 7.5 4z"/></svg>
+        Kembali Ikuti
+      </button>
+
+      <div class="traffic-legend" id="traffic-legend" hidden>
+        <span>🟢 Lancar</span><span>🟡 Padat</span><span>🔴 Macet</span><span>🟣 Sangat Macet</span>
+      </div>
+
+      <div class="map-controls">
+        <button class="map-btn" id="btn-zoom-in" aria-label="Perbesar">+</button>
+        <button class="map-btn" id="btn-zoom-out" aria-label="Perkecil">−</button>
+        <button class="map-btn map-btn--traffic" id="btn-traffic" aria-label="Traffic">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M9 2h6v3h-6zM9 19h6v3h-6zM7 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 5.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+        </button>
+        <button class="map-btn map-btn--locate" id="btn-locate" aria-label="Lokasi saya">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M12 2 4.5 20l7.5-4 7.5 4z"/></svg>
+        </button>
+      </div>
+
+      <div class="map-scale" id="map-scale">200 m</div>
+    </section>
+  </main>
+
+  <!-- RIWAYAT VIEW -->
+  <section class="view view--riwayat" id="view-riwayat" hidden>
+    <h2 class="view__title">Riwayat Perjalanan</h2>
+    <div class="history-summary">
+      <div class="history-summary__item"><span>Odometer Total</span><strong id="hist-odometer">0.0 km</strong></div>
+      <div class="history-summary__item"><span>Trip A</span><strong id="hist-tripa">0.0 km</strong></div>
+      <div class="history-summary__item"><span>Trip B</span><strong id="hist-tripb">0.0 km</strong></div>
+    </div>
+
+    <div class="history-summary">
+      <div class="history-summary__item"><span>Trip Hari Ini</span><strong id="hist-today">0.0 km</strong></div>
+      <div class="history-summary__item"><span>Kecepatan Rata-rata</span><strong id="hist-avgspeed">-- km/h</strong></div>
+      <div class="history-summary__item"><span>Kecepatan Maks</span><strong id="hist-maxspeed">-- km/h</strong></div>
+    </div>
+    <div class="history-summary">
+      <div class="history-summary__item"><span>Durasi Sesi</span><strong id="hist-duration">00:00</strong></div>
+      <div class="history-summary__item"><span>Waktu Bergerak</span><strong id="hist-moving">00:00</strong></div>
+      <div class="history-summary__item"><span>Waktu Berhenti</span><strong id="hist-stopped">00:00</strong></div>
+    </div>
+
+    <h3 class="view__subtitle">Riwayat Reset Trip</h3>
+    <ul class="history-list" id="history-list"></ul>
+
+    <h3 class="view__subtitle">Riwayat Berkendara</h3>
+    <ul class="history-list" id="ride-history-list"></ul>
+  </section>
+
+  <!-- PENGATURAN VIEW -->
+  <section class="view view--pengaturan" id="view-pengaturan" hidden>
+    <h2 class="view__title">Pengaturan</h2>
+
+    <div class="settings-group">
+      <h3>Satuan</h3>
+      <div class="settings-row">
+        <span>Satuan Kecepatan</span>
+        <div class="segmented" id="setting-unit">
+          <button data-unit="kmh" class="segmented__btn active">km/h</button>
+          <button data-unit="mph" class="segmented__btn">mph</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Layar</h3>
+      <div class="settings-row">
+        <span>Kecerahan</span>
+        <input type="range" id="setting-brightness" min="20" max="100" value="100">
+      </div>
+      <div class="settings-row">
+        <span>Wake Lock (layar tetap menyala)</span>
+        <label class="switch"><input type="checkbox" id="setting-wakelock" checked><span class="switch__slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>Mode Layar Penuh</span>
+        <button class="btn-secondary" id="btn-fullscreen">Aktifkan</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Data Perjalanan</h3>
+      <div class="settings-row">
+        <span>Reset Odometer Total</span>
+        <button class="btn-danger" id="btn-reset-odometer">Reset</button>
+      </div>
+      <div class="settings-row">
+        <span>Hapus Riwayat</span>
+        <button class="btn-danger" id="btn-clear-history">Hapus</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Sesi Berkendara</h3>
+      <div class="settings-row">
+        <span>Selesaikan Sesi Saat Ini</span>
+        <button class="btn-secondary" id="btn-end-session">Selesai</button>
+      </div>
+      <div class="settings-row">
+        <span>Hapus Riwayat Berkendara</span>
+        <button class="btn-danger" id="btn-clear-ride-history">Hapus</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>Traffic Engine</h3>
+      <div class="settings-row">
+        <span>Tampilkan Traffic</span>
+        <label class="switch"><input type="checkbox" id="setting-traffic-enabled"><span class="switch__slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>Provider</span>
+        <div class="segmented" id="setting-traffic-provider">
+          <button data-provider="here" class="segmented__btn active">HERE</button>
+          <button data-provider="tomtom" class="segmented__btn">TomTom</button>
+          <button data-provider="mapbox" class="segmented__btn">Mapbox</button>
+        </div>
+      </div>
+      <div class="settings-row settings-row--stack">
+        <span>API Key</span>
+        <input type="text" id="setting-traffic-apikey" class="settings-input" placeholder="Masukkan API key Anda..." autocomplete="off">
+      </div>
+      <p class="settings-note">Traffic Engine memerlukan API key berbayar dari HERE/TomTom/Mapbox. Aplikasi ini statis (GitHub Pages) tanpa server, jadi key hanya tersimpan di browser Anda sendiri dan dikirim langsung ke provider — tidak pernah melalui pihak lain.</p>
+    </div>
+
+    <div class="settings-group">
+      <h3>Aplikasi</h3>
+      <div class="settings-row">
+        <span>Install Aplikasi</span>
+        <button class="btn-secondary" id="btn-install-app">Install</button>
+      </div>
+      <div class="settings-row">
+        <span>Versi</span>
+        <strong>1.0.0</strong>
+      </div>
+      <p class="settings-note">Aplikasi ini 100% menggunakan sensor smartphone (GPS, kompas, akselerometer, giroskop). Tidak terhubung ke ECU, CAN Bus, OBD, atau sistem kelistrikan motor manapun.</p>
+    </div>
+  </section>
+
+  <!-- BOTTOM NAVIGATION -->
+  <nav class="bottomnav surface-premium">
+    <button class="bottomnav__item active" data-view="home">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M12 3 2 12h3v8h6v-6h2v6h6v-8h3z"/></svg>
+      <span>Home</span>
+    </button>
+    <button class="bottomnav__item" data-view="cari">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M10 4a6 6 0 1 0 3.8 10.7l4.75 4.75 1.4-1.4-4.75-4.75A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>
+      <span>Cari</span>
+    </button>
+    <button class="bottomnav__item" data-view="navigasi">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M12 2 4.5 20l7.5-4 7.5 4z"/></svg>
+      <span>Navigasi</span>
+    </button>
+    <button class="bottomnav__item" data-view="riwayat">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z"/></svg>
+      <span>Riwayat</span>
+    </button>
+    <button class="bottomnav__item" data-view="pengaturan">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.4 2.4a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4L9.3 5.1a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.7a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.7a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+      <span>Pengaturan</span>
+    </button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
