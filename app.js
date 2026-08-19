@@ -15,6 +15,7 @@ import { SettingsManager } from './settings.js';
 import { TrafficEngine, TRAFFIC_PROVIDERS } from './traffic.js';
 import { WeatherEngine } from './weather.js';
 import { NavigationEngine, formatEta, formatClockTime } from './navigation.js';
+import { ThemeManager } from './theme.js';
 import { storage } from './storage.js';
 import {
   startClock, setGpsChip, setBtChip, initNetworkStatus, initBatteryStatus,
@@ -36,6 +37,7 @@ const map = new MapManager('map-container');
 const traffic = new TrafficEngine(map);
 const weather = new WeatherEngine();
 const navEngine = new NavigationEngine(map);
+const theme = new ThemeManager();
 
 /* ---------------- GPS wiring (Smart GPS Engine) ---------------- */
 const gpsBanner = document.getElementById('gps-banner');
@@ -75,6 +77,7 @@ gps.on((data) => {
 
   userLat = data.latitude;
   userLng = data.longitude;
+  theme.setLatLng(data.latitude, data.longitude);
 
   speedo.setSpeedKmh(data.speedKmh);
   trip.update(data.latitude, data.longitude, data.accuracy, data.speedKmh, data.isMoving);

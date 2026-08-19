@@ -38,6 +38,90 @@
   --glass-highlight: rgba(255, 255, 255, 0.06);
   --noise-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   --hex-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='104' viewBox='0 0 60 104'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-opacity='0.05' d='M30 0L60 17.3V52L30 69.3L0 52V17.3Z M30 69.3L60 86.6V104M30 69.3L0 86.6V104M30 0V-17.3'/%3E%3C/svg%3E");
+  --hex-svg-day: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='104' viewBox='0 0 60 104'%3E%3Cpath fill='none' stroke='%23000000' stroke-opacity='0.045' d='M30 0L60 17.3V52L30 69.3L0 52V17.3Z M30 69.3L60 86.6V104M30 69.3L0 86.6V104M30 0V-17.3'/%3E%3C/svg%3E");
+
+  /* ============================================================
+     DAY/NIGHT PREMIUM THEME TOKENS
+     Every value below equals the exact color already used at that
+     call site, so with no theme applied (default) the UI is 100%
+     pixel-identical to before. html[data-theme="day"] further down
+     overrides these for the light "Siang" theme. Toggled by theme.js.
+     ============================================================ */
+  --surf-chrome: #000;              /* statusbar / bottomnav gloss-black bars */
+  --surf-gauge-1: #0d0e10;          /* gauge panel gradient, top stop */
+  --surf-gauge-2: #08090a;          /* gauge panel gradient, bottom stop */
+  --surf-map: #0c0d0e;              /* map panel base background */
+  --surf-float: rgba(17, 18, 20, 0.92);   /* map search bar / map circular buttons */
+  --surf-float-chip: rgba(17, 18, 20, 0.9); /* category chips */
+  --surf-float-strong: rgba(17, 18, 20, 0.94); /* nav-instructions banner */
+  --surf-legend-a: rgba(0, 0, 0, 0.55);   /* map scale pill */
+  --surf-legend-b: rgba(0, 0, 0, 0.6);    /* traffic legend */
+  --glass-bg-2: rgba(22, 24, 27, 0.4);    /* 2nd gradient stop shared by all glass cards */
+  --clr-overlay-soft: rgba(255, 255, 255, 0.06); /* speedo arc track, banner/quality chip fill */
+  --clr-overlay-med: rgba(255, 255, 255, 0.08);  /* map search-star pressed state */
+  --clr-shadow-soft: rgba(0, 0, 0, 0.35);  /* glass card drop shadow */
+  --clr-shadow-med: rgba(0, 0, 0, 0.5);    /* gmarker dot/arrow shadow */
+  --clr-shadow-strong: rgba(0, 0, 0, 0.8); /* map brand text-shadow */
+  --clr-vignette: rgba(0, 0, 0, 0.38);     /* cockpit edge vignette */
+  --speedo-ring-fill: #0e0f11;
+  --speedo-arc-bg: rgba(255, 255, 255, 0.06);
+  --speedo-glow: rgba(255, 255, 255, 0.15);
+  --lean-ground: rgba(255, 255, 255, 0.15);
+  --map-tile-filter: invert(100%) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.55);
+}
+
+/* ============================================================
+   DAY THEME — "Siang" (premium light TFT, high-visibility in sun)
+   Applied via [data-theme="day"] on <html> by theme.js. Only ever
+   overrides the tokens above; no existing selector is modified, so
+   the default (no attribute / data-theme="night") look is untouched.
+   ============================================================ */
+html[data-theme="day"] {
+  --c-bg: #eef0f2;
+  --c-bg-panel: #e2e5e8;
+  --c-bg-card: #ffffff;
+  --c-bg-card-2: #e7e9ec;
+  --c-red-glow: rgba(216, 31, 42, 0.32);
+  --c-white: #1b1e22;
+  --c-silver: #4d545c;
+  --c-silver-dim: #868d95;
+  --c-green: #1f9c5c;
+  --c-yellow: #a8760c;
+  --c-border: rgba(0, 0, 0, 0.09);
+  --c-border-strong: rgba(0, 0, 0, 0.15);
+  --shadow-card: 0 4px 18px rgba(20, 24, 28, 0.12);
+
+  --c-blue-dot: #2f7fe0;
+  --c-poor: #c53a3a;
+  --c-fair: #a8760c;
+  --c-good: #4f9e2e;
+  --c-excellent: #1f9c5c;
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.07);
+  --glass-highlight: rgba(255, 255, 255, 0.85);
+  --hex-svg: var(--hex-svg-day);
+
+  --surf-chrome: #fbfbfc;
+  --surf-gauge-1: #f6f7f8;
+  --surf-gauge-2: #eceef0;
+  --surf-map: #eef0f2;
+  --surf-float: rgba(255, 255, 255, 0.92);
+  --surf-float-chip: rgba(255, 255, 255, 0.9);
+  --surf-float-strong: rgba(255, 255, 255, 0.94);
+  --surf-legend-a: rgba(255, 255, 255, 0.8);
+  --surf-legend-b: rgba(255, 255, 255, 0.82);
+  --glass-bg-2: rgba(255, 255, 255, 0.32);
+  --clr-overlay-soft: rgba(0, 0, 0, 0.05);
+  --clr-overlay-med: rgba(0, 0, 0, 0.07);
+  --clr-shadow-soft: rgba(20, 24, 28, 0.1);
+  --clr-shadow-med: rgba(20, 24, 28, 0.22);
+  --clr-shadow-strong: rgba(20, 24, 28, 0.4);
+  --clr-vignette: rgba(0, 0, 0, 0.05);
+  --speedo-ring-fill: #f2f3f5;
+  --speedo-arc-bg: rgba(0, 0, 0, 0.07);
+  --speedo-glow: rgba(0, 0, 0, 0.1);
+  --lean-ground: rgba(0, 0, 0, 0.16);
+  --map-tile-filter: saturate(1.05) contrast(1.02) brightness(1.01);
 }
 
 /* Reusable premium surface layer: carbon weave + hex pattern + film grain,
@@ -193,7 +277,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   position: absolute; inset: 0;
   pointer-events: none;
   z-index: 15;
-  background: radial-gradient(ellipse 120% 100% at 50% 50%, transparent 62%, rgba(0,0,0,0.38) 100%);
+  background: radial-gradient(ellipse 120% 100% at 50% 50%, transparent 62%, var(--clr-vignette) 100%);
 }
 
 /* ---------------- STATUS BAR ---------------- */
@@ -204,7 +288,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  background: #000;
+  background: var(--surf-chrome);
   border-bottom: 1px solid var(--c-border);
   font-size: 12px;
   z-index: 20;
@@ -266,7 +350,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   gap: 8px;
   background:
     radial-gradient(circle at 50% 0%, rgba(216,31,42,0.06), transparent 55%),
-    linear-gradient(180deg, #0d0e10 0%, #08090a 100%);
+    linear-gradient(180deg, var(--surf-gauge-1) 0%, var(--surf-gauge-2) 100%);
   border-right: 1px solid var(--c-border);
   overflow-y: auto;
   scrollbar-width: none;
@@ -278,7 +362,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   max-width: 60%;
   display: flex;
   flex-direction: column;
-  background: #0c0d0e;
+  background: var(--surf-map);
 }
 
 /* ---------------- SPEEDOMETER ---------------- */
@@ -292,13 +376,13 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .speedo__svg { width: 100%; height: 100%; overflow: visible; }
 
 .speedo__ring-bg {
-  fill: #0e0f11;
+  fill: var(--speedo-ring-fill);
   stroke: var(--c-border-strong);
   stroke-width: 1;
 }
 .speedo__arc-bg {
   fill: none;
-  stroke: rgba(255,255,255,0.06);
+  stroke: var(--speedo-arc-bg);
   stroke-width: 14;
   stroke-linecap: round;
 }
@@ -341,7 +425,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   font-family: var(--font-mono);
   letter-spacing: -1px;
   color: var(--c-white);
-  text-shadow: 0 0 18px rgba(255,255,255,0.15);
+  text-shadow: 0 0 18px var(--speedo-glow);
 }
 .speedo__unit {
   font-size: 12px;
@@ -379,7 +463,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   color: var(--c-poor);
 }
 .gps-banner[data-status="searching"] {
-  background: rgba(255,255,255,0.06);
+  background: var(--clr-overlay-soft);
   border-color: var(--c-border-strong);
   color: var(--c-silver);
 }
@@ -396,11 +480,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 
 .mini-card {
   position: relative;
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: var(--radius-sm);
   padding: 6px 4px;
   display: flex;
@@ -416,7 +500,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   padding: 1px 6px;
   border-radius: 999px;
   margin-top: 1px;
-  background: rgba(255,255,255,0.06);
+  background: var(--clr-overlay-soft);
   color: var(--c-silver-dim);
 }
 .mini-card__quality[data-quality="excellent"] { color: var(--c-excellent); background: rgba(53,208,127,0.14); }
@@ -458,11 +542,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: var(--radius-md);
   padding: 6px 10px;
   flex-shrink: 0;
@@ -472,7 +556,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .lean-bike { width: 100%; height: 100%; }
 .lean-bike__body, .lean-bike__bar { fill: var(--c-silver); }
 .lean-bike__wheel { fill: none; stroke: var(--c-silver); stroke-width: 4; }
-.lean-bike__ground { stroke: rgba(255,255,255,0.15); stroke-width: 1.5; }
+.lean-bike__ground { stroke: var(--lean-ground); stroke-width: 1.5; }
 #lean-bike-group {
   transform-origin: 70px 118px;
   transition: transform 0.08s linear;
@@ -505,7 +589,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   letter-spacing: 1px;
   color: var(--c-white);
   z-index: 5;
-  text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+  text-shadow: 0 2px 6px var(--clr-shadow-strong);
   pointer-events: none;
 }
 .map-brand span { color: var(--c-red); }
@@ -518,7 +602,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   z-index: 6;
   display: flex;
   align-items: center;
-  background: rgba(17,18,20,0.92);
+  background: var(--surf-float);
   backdrop-filter: blur(6px);
   border: 1px solid var(--c-border-strong);
   border-radius: 999px;
@@ -541,7 +625,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  background: #16181b;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border-strong);
   border-radius: var(--radius-md);
   max-height: 260px;
@@ -572,7 +656,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   border-radius: 50%;
 }
 .map-search__star.active { color: var(--c-fair); }
-.map-search__star:active { background: rgba(255,255,255,0.08); }
+.map-search__star:active { background: var(--clr-overlay-med); }
 .map-search__section-title {
   padding: 8px 14px 4px;
   font-size: 10px;
@@ -597,7 +681,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .map-categories::-webkit-scrollbar { display: none; }
 .chip {
   flex-shrink: 0;
-  background: rgba(17,18,20,0.9);
+  background: var(--surf-float-chip);
   border: 1px solid var(--c-border-strong);
   color: var(--c-silver);
   font-size: 11.5px;
@@ -617,7 +701,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .map-container .maplibregl-ctrl-logo { transform: scale(0.8); opacity: 0.7; }
 /* Darken bright OSM raster tiles to match the gloss-black TFT theme */
 .map-container .maplibregl-canvas {
-  filter: invert(100%) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.55);
+  filter: var(--map-tile-filter);
 }
 /* Google-Maps-style "my location" marker: pulsing accuracy halo + blue dot
  * + heading arrow. Pulse animates transform/opacity only (GPU compositing,
@@ -644,7 +728,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   border-radius: 50%;
   background: var(--c-blue-dot);
   border: 2.5px solid #fff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  box-shadow: 0 2px 6px var(--clr-shadow-med);
 }
 .gmarker__arrow {
   position: absolute; left: 50%; top: 50%;
@@ -656,12 +740,12 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   opacity: 0;
   transition: opacity 0.25s ease;
   transform-origin: 50% 30px; /* pivot back at the dot's center, not the arrow's own box */
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+  filter: drop-shadow(0 1px 2px var(--clr-shadow-med));
 }
 
 .map-marker--poi {
   width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-  font-size: 14px; background: #1c1f23; border: 2px solid var(--c-red); border-radius: 50% 50% 50% 0;
+  font-size: 14px; background: var(--c-bg-card-2); border: 2px solid var(--c-red); border-radius: 50% 50% 50% 0;
   transform: rotate(45deg); box-shadow: var(--shadow-card);
 }
 .map-marker--poi span { transform: rotate(-45deg); }
@@ -679,7 +763,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: rgba(17,18,20,0.92);
+  background: var(--surf-float);
   border: 1px solid var(--c-border-strong);
   color: var(--c-white);
   font-size: 18px;
@@ -699,7 +783,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   z-index: 6;
   font-size: 10.5px;
   color: var(--c-silver);
-  background: rgba(0,0,0,0.55);
+  background: var(--surf-legend-a);
   padding: 3px 8px;
   border-radius: 6px;
   border: 1px solid var(--c-border);
@@ -737,7 +821,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   left: 10px;
   right: 10px;
   z-index: 6;
-  background: rgba(17,18,20,0.94);
+  background: var(--surf-float-strong);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--c-border-strong);
@@ -784,11 +868,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   gap: 8px;
   font-size: 11.5px;
   color: var(--c-silver);
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: 999px;
   padding: 6px 14px;
   flex-shrink: 0;
@@ -812,7 +896,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   flex-direction: column;
   gap: 3px;
   font-size: 10px;
-  background: rgba(0,0,0,0.6);
+  background: var(--surf-legend-b);
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid var(--c-border);
@@ -858,11 +942,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   margin-bottom: 20px;
 }
 .history-summary__item {
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: var(--radius-md);
   padding: 12px;
   display: flex;
@@ -874,11 +958,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .history-list li {
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: var(--radius-md);
   padding: 12px 14px;
   display: flex;
@@ -891,11 +975,11 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .history-list__empty { text-align: center; color: var(--c-silver-dim); padding: 30px 0; font-size: 13px; }
 
 .settings-group {
-  background: linear-gradient(180deg, var(--glass-bg), rgba(22,24,27,0.4));
+  background: linear-gradient(180deg, var(--glass-bg), var(--glass-bg-2));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 2px 6px var(--clr-shadow-soft);
   border-radius: var(--radius-lg);
   padding: 16px 16px 4px;
   margin-bottom: 16px;
@@ -979,7 +1063,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   height: var(--bottomnav-h);
   min-height: var(--bottomnav-h);
   display: flex;
-  background: #000;
+  background: var(--surf-chrome);
   border-top: 1px solid var(--c-border);
   z-index: 20;
   padding-bottom: env(safe-area-inset-bottom);
@@ -1008,7 +1092,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   left: 50%;
   bottom: calc(var(--bottomnav-h) + 16px);
   transform: translate(-50%, 20px);
-  background: #1c1f23;
+  background: var(--c-bg-card-2);
   border: 1px solid var(--c-border-strong);
   color: var(--c-white);
   padding: 10px 18px;
@@ -1036,6 +1120,69 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   z-index: 998;
   transition: opacity 0.2s ease;
 }
+
+/* ============================================================
+   DAY/NIGHT PREMIUM THEME — transition + toggle chip
+   Purely additive: new selectors only, nothing above is touched.
+   ============================================================ */
+
+/* Brief, GPU-cheap crossfade of colors when theme.js flips data-theme.
+   Scoped to a transient class so no element's default transition timing
+   is changed outside of an actual theme switch. */
+html.theme-transitioning body,
+html.theme-transitioning .app,
+html.theme-transitioning .statusbar,
+html.theme-transitioning .bottomnav,
+html.theme-transitioning .panel--gauge,
+html.theme-transitioning .panel--map,
+html.theme-transitioning .view,
+html.theme-transitioning .mini-card,
+html.theme-transitioning .lean-panel,
+html.theme-transitioning .weather-strip,
+html.theme-transitioning .history-summary__item,
+html.theme-transitioning .history-list li,
+html.theme-transitioning .settings-group,
+html.theme-transitioning .settings-input,
+html.theme-transitioning .map-search,
+html.theme-transitioning .chip,
+html.theme-transitioning .map-btn,
+html.theme-transitioning .nav-instructions,
+html.theme-transitioning .nav-alternatives__btn,
+html.theme-transitioning .toast,
+html.theme-transitioning .segmented,
+html.theme-transitioning .switch__slider,
+html.theme-transitioning .btn-secondary,
+html.theme-transitioning .btn-danger,
+html.theme-transitioning .map-scale,
+html.theme-transitioning .traffic-legend,
+html.theme-transitioning .speedo__ring-bg,
+html.theme-transitioning .speedo__arc-bg,
+html.theme-transitioning .map-marker--poi,
+html.theme-transitioning .map-container .maplibregl-canvas {
+  transition: background-color 480ms ease, border-color 480ms ease,
+    color 480ms ease, box-shadow 480ms ease, fill 480ms ease,
+    stroke 480ms ease, filter 480ms ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning * { transition-duration: 0.001ms !important; }
+}
+
+/* Status bar quick toggle (tap cycles Malam -> Siang -> Otomatis) */
+.status-chip--theme { position: relative; cursor: pointer; }
+.status-chip--theme .icon--sun { display: none; }
+.status-chip--theme[data-active="day"] .icon--sun { display: block; }
+.status-chip--theme[data-active="day"] .icon--moon { display: none; }
+.status-chip--theme__auto-dot {
+  display: none;
+  position: absolute;
+  top: -1px;
+  right: -3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--c-excellent);
+}
+.status-chip--theme[data-auto="true"] .status-chip--theme__auto-dot { display: block; }
 
 /* ============================================================
    RESPONSIVE — PORTRAIT
