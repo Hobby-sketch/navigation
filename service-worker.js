@@ -1,11 +1,15 @@
 /**
  * service-worker.js
- * App-shell precache (cache-first) + runtime cache for map tiles
- * (stale-while-revalidate). Everything else (Nominatim/Overpass/OSRM API
- * calls, third-party scripts) passes straight through to the network.
+ * - App shell is precached asset-by-asset (Promise.allSettled): one missing
+ *   or failing file can NEVER abort the install.
+ * - Same-origin files: cache-first with background refresh; navigations fall
+ *   back to the cached index.html when offline.
+ * - Map tiles: stale-while-revalidate (recently seen areas work offline).
+ * - MapLibre from the CDN: cached on first load so the app starts offline.
+ * - Routing / geocoding / weather API calls always go to the network.
  */
 
-const CACHE_VERSION = 'beatdash-v2';
+const CACHE_VERSION = 'beatdash-v3';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,8 +17,13 @@ const APP_SHELL = [
   './app.js',
   './boot.js',
   './gps.js',
-  './speedometer.js',
+  './geo.js',
+  './heading.js',
+  './orientation.js',
   './motion.js',
+  './maneuver.js',
+  './voice.js',
+  './speedometer.js',
   './trip.js',
   './map.js',
   './ui.js',
@@ -24,6 +33,7 @@ const APP_SHELL = [
   './traffic.js',
   './weather.js',
   './navigation.js',
+  './theme.js',
   './manifest.json',
   './assets/images/honda-logo.png',
   './assets/icons/icon-72.png',
@@ -34,14 +44,30 @@ const APP_SHELL = [
   './assets/icons/icon-192.png',
   './assets/icons/icon-384.png',
   './assets/icons/icon-512.png',
+  './assets/icons/icon-maskable-512.png',
 ];
 
 const TILE_HOSTS = ['tile.openstreetmap.org'];
+const CDN_HOSTS = ['unpkg.com'];
+const CDN_ASSETS = ['https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js', 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    const local = await Promise.allSettled(APP_SHELL.map(async (path) => {
+      const res = await fetch(new Request(path, { cache: 'reload' }));
+      if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+      await cache.put(path, res);
+    }));
+    local.filter((r) => r.status === 'rejected').forEach((r) => console.warn('[sw] precache skipped:', r.reason && r.reason.message));
+    // Best-effort: CDN files via CORS (unpkg sends ACAO:*) so the status can be CHECKED —
+    // an opaque (no-cors) response could be an error page and must never be cached.
+    await Promise.allSettled(CDN_ASSETS.map(async (url) => {
+      const res = await fetch(url, { mode: 'cors' });
+      if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+      await cache.put(url, res);
+    }));
+  })());
   self.skipWaiting();
 });
 
@@ -55,43 +81,56 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
 
-  // App shell: cache-first, falling back to network, then updating cache.
+  // Same-origin app files.
   if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => {
-        const fetchPromise = fetch(event.request)
-          .then((networkRes) => {
-            if (networkRes && networkRes.ok) {
-              const clone = networkRes.clone();
-              caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
-            }
-            return networkRes;
-          })
-          .catch(() => cached);
-        return cached || fetchPromise;
-      })
-    );
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_VERSION);
+      const cached = await cache.match(req, { ignoreSearch: req.mode === 'navigate' });
+      const network = fetch(req)
+        .then((res) => { if (res && res.ok && res.status === 200) cache.put(req, res.clone()); return res; })
+        .catch(() => null);
+      if (cached) { network.catch(() => {}); return cached; }
+      const res = await network;
+      if (res) return res;
+      if (req.mode === 'navigate') {
+        const shell = await cache.match('./index.html');
+        if (shell) return shell;
+      }
+      return new Response('Offline', { status: 503, statusText: 'Offline' });
+    })());
     return;
   }
 
-  // Map tiles: stale-while-revalidate so recently viewed areas work offline.
+  // MapLibre CDN: cache-first (versioned URL, immutable). Only verified-OK responses are stored.
+  if (CDN_HOSTS.includes(url.hostname)) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_VERSION);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      const res = await fetch(req);
+      if (res && res.ok && res.type !== 'opaque') cache.put(req, res.clone());
+      return res;
+    })());
+    return;
+  }
+
+  // Map tiles: stale-while-revalidate.
   if (TILE_HOSTS.includes(url.hostname)) {
     event.respondWith(
       caches.open(CACHE_VERSION).then(async (cache) => {
-        const cached = await cache.match(event.request);
-        const fetchPromise = fetch(event.request)
-          .then((networkRes) => {
-            if (networkRes && networkRes.ok) cache.put(event.request, networkRes.clone());
-            return networkRes;
-          })
-          .catch(() => cached);
+        const cached = await cache.match(req);
+        const fetchPromise = fetch(req)
+          .then((res) => { if (res && res.ok) cache.put(req, res.clone()); return res; })
+          .catch(() => cached || Response.error());
         return cached || fetchPromise;
       })
     );
     return;
   }
 
-  // Everything else (Nominatim, Overpass, OSRM, MapLibre CDN, etc.) — passthrough.
+  // Everything else (Nominatim, Overpass, OSRM, weather APIs) — straight to the network.
 });

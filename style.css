@@ -123,6 +123,12 @@ html[data-theme="day"] {
   --lean-ground: rgba(0, 0, 0, 0.16);
   --map-tile-filter: saturate(1.05) contrast(1.02) brightness(1.01);
 }
+/* The loading screen is brand-fixed: pin the two tokens it reads so the day
+   theme can never change how it looks. */
+html[data-theme="day"] .boot-screen {
+  --c-silver: #b9bec4;
+  --c-red-glow: rgba(216, 31, 42, 0.55);
+}
 
 /* Reusable premium surface layer: carbon weave + hex pattern + film grain,
  * all GPU-cheap (static backgrounds, no per-frame repaint). Apply via
@@ -152,6 +158,10 @@ html[data-theme="day"] {
 .surface-premium > * { position: relative; z-index: 1; }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* The HTML `hidden` attribute must always win over component display rules
+   (traffic legend, resume-follow and GPS banner were never really hidden). */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -325,7 +335,7 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .status-chip--battery, .status-chip--brightness { font-size: 11px; font-weight: 600; }
 
 /* ============================================================
-   DASHBOARD — LANDSCAPE 40/60
+   DASHBOARD — LANDSCAPE ~33/67 (map is always the dominant area)
    ============================================================ */
 .dashboard {
   flex: 1;
@@ -341,8 +351,8 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
   overflow: hidden;
 }
 .panel--gauge {
-  flex: 0 0 40%;
-  max-width: 40%;
+  flex: 0 0 33%;
+  max-width: 33%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -358,8 +368,8 @@ button:focus-visible, input:focus-visible, .chip:focus-visible {
 .panel--gauge::-webkit-scrollbar { display: none; }
 
 .panel--map {
-  flex: 0 0 60%;
-  max-width: 60%;
+  flex: 0 0 67%;
+  max-width: 67%;
   display: flex;
   flex-direction: column;
   background: var(--surf-map);
@@ -1209,10 +1219,441 @@ html.theme-transitioning .map-container .maplibregl-canvas {
   .speedo__value { font-size: clamp(32px, 11vw, 46px); }
 }
 
-/* Small landscape phones — tighten vertical rhythm */
-@media (orientation: landscape) and (max-height: 420px) {
-  .panel--gauge { gap: 5px; padding: 6px 8px 4px; }
-  .speedo { width: min(80%, 190px); }
-  .lean-panel { padding: 4px 8px; }
-  .lean-panel__visual { width: 40px; height: 40px; }
+/* ============================================================
+   PREMIUM REFINEMENT — components shared by portrait & landscape
+   ============================================================ */
+:root {
+  --c-nav: #2f8bff;            /* navigation / route blue */
+  --c-nav-deep: #1650b8;
+  --c-ok: var(--c-green);      /* GPS valid / on-route */
+  --c-warn: #f0a92e;           /* amber warning */
+  --navbar-h: 56px;
+  --ring-glow: 0 0 0 1px var(--c-border), 0 6px 20px var(--clr-shadow-soft);
+}
+
+/* ---- LEAN PANEL: Roll | bike | Pitch, pivot = tyre/ground contact ---- */
+.lean-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 6px;
+}
+.lean-panel__data { display: contents; }
+.lean-stat--roll { grid-column: 1; grid-row: 1; }
+.lean-panel__visual { grid-column: 2; grid-row: 1; }
+.lean-stat--pitch { grid-column: 3; grid-row: 1; }
+.lean-stat { line-height: 1.15; }
+.lean-bike__tire { fill: var(--c-silver); }
+.lean-bike__light { fill: var(--c-red); }
+#lean-bike-group {
+  transform-box: view-box;
+  transform-origin: 70px 124px;      /* tyre contact point, on the ground line */
+  transition: transform 0.1s linear;
+  will-change: transform;
+}
+.lean-panel__cal {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--c-silver-dim);
+  z-index: 2;
+}
+.lean-panel__cal::after { content: ""; position: absolute; inset: -9px; }
+.lean-panel__cal .icon { width: 12px; height: 12px; fill: currentColor; }
+.lean-panel[data-cal="true"] .lean-panel__cal { color: var(--c-ok); }
+.lean-panel__cal:active { background: var(--clr-overlay-med); }
+.lean-panel[data-conf="low"] .lean-stat__value { opacity: 0.55; }
+
+/* ---- Speedometer cell (neutral wrapper outside landscape) ---- */
+.speedo-cell { display: contents; }
+
+/* ---- Weather strip: units collapse when space is tight ---- */
+.weather-strip__meta .u { color: var(--c-silver-dim); }
+
+/* ---- Map: compass / mode button ---- */
+.map-btn--compass { position: relative; flex-direction: column; gap: 0; }
+.map-btn--compass .compass-arrow { width: 15px; height: 15px; fill: var(--c-red); transition: transform 0.15s linear; }
+.map-btn--compass .compass-label { font-size: 9px; font-weight: 800; line-height: 1; letter-spacing: 0.5px; margin-top: -1px; color: var(--c-white); }
+.map-btn--compass[data-mode="heading"] { border-color: var(--c-nav); box-shadow: 0 0 0 3px rgba(47,139,255,0.22), var(--shadow-card); }
+.map-btn--compass[data-mode="heading"] .compass-arrow { fill: var(--c-nav); }
+
+/* ---- "Jadikan Tujuan" popup + tapped-point marker ---- */
+.place-popup-wrap .maplibregl-popup-content {
+  background: var(--c-bg-card);
+  color: var(--c-white);
+  border: 1px solid var(--c-border-strong);
+  border-radius: 14px;
+  padding: 10px 12px 10px;
+  box-shadow: var(--shadow-card);
+  min-width: 150px;
+  max-width: 230px;
+}
+.place-popup-wrap .maplibregl-popup-tip { border-top-color: var(--c-bg-card); border-bottom-color: var(--c-bg-card); }
+.place-popup-wrap .maplibregl-popup-close-button { color: var(--c-silver); font-size: 16px; padding: 2px 7px; }
+.place-popup__name { font-size: 13px; font-weight: 700; margin-right: 14px; line-height: 1.25; }
+.place-popup__sub { font-size: 10px; color: var(--c-silver-dim); margin-top: 2px; font-family: var(--font-mono); }
+.place-popup__btn {
+  margin-top: 8px;
+  width: 100%;
+  background: var(--c-red);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  box-shadow: 0 3px 10px rgba(216,31,42,0.35);
+}
+.place-popup__btn:active { filter: brightness(0.9); }
+.map-marker--tap { width: 24px; height: 24px; position: relative; }
+.map-marker--tap span {
+  position: absolute; inset: 0;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--c-red);
+  border: 2px solid #fff;
+  box-shadow: 0 3px 8px var(--clr-shadow-med);
+}
+.map-marker--tap span::after { content: ""; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #fff; left: 50%; top: 50%; margin: -4px 0 0 -4px; }
+
+/* ---- Vehicle arrow on the map: larger, clearer chevron ---- */
+.gmarker__arrow {
+  margin-top: -32px;
+  border-left-width: 8px;
+  border-right-width: 8px;
+  border-bottom-width: 17px;
+  transform-origin: 50% 32px;
+}
+
+/* ---- NAVIGATION: banner (top) ---- */
+.nav-mode .map-brand, .nav-active .map-brand { display: none; }
+.nav-active .map-categories, .nav-active .map-search { display: none; }
+.nav-mode .nav-instructions, .nav-active .nav-instructions { display: block; }
+.nav-instructions {
+  background: none;
+  border: 0;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  right: auto;
+  width: min(calc(100% - 20px), 460px);
+  pointer-events: none;
+}
+.nav-instructions > * { pointer-events: auto; }
+.nav-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--c-nav) 0%, var(--c-nav-deep) 100%);
+  border: 1px solid rgba(255,255,255,0.22);
+  box-shadow: 0 8px 22px rgba(10,40,110,0.45), inset 0 1px 0 rgba(255,255,255,0.28);
+}
+.nav-banner__icon { flex: 0 0 auto; display: grid; place-items: center; }
+.nav-banner__icon svg { width: 40px; height: 40px; }
+.nav-banner__text { min-width: 0; flex: 1; line-height: 1.15; }
+.nav-banner__dist { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.nav-banner__street { font-size: 13px; font-weight: 600; opacity: 0.95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-banner[data-state="idle"] { background: linear-gradient(135deg, var(--c-bg-card-2), var(--c-bg-card)); color: var(--c-white); border-color: var(--c-border-strong); box-shadow: var(--shadow-card); }
+.nav-banner[data-state="idle"] .nav-banner__icon { display: none; }
+.nav-banner[data-state="idle"] .nav-banner__dist { display: none; }
+.nav-banner[data-state="idle"] .nav-banner__street { font-size: 13px; }
+.nav-banner[data-state="TURN_NOW"] { animation: navTurnPulse 1s ease-in-out infinite; }
+.nav-banner[data-state="off"] { background: linear-gradient(135deg, #e09a1c, #a86a08); box-shadow: 0 8px 22px rgba(120,70,0,0.4), inset 0 1px 0 rgba(255,255,255,0.28); }
+.nav-banner[data-state="arrived"] { background: linear-gradient(135deg, #22b573, #0f7a4a); box-shadow: 0 8px 22px rgba(10,90,55,0.4), inset 0 1px 0 rgba(255,255,255,0.28); }
+@keyframes navTurnPulse {
+  0%, 100% { box-shadow: 0 8px 22px rgba(10,40,110,0.45), 0 0 0 0 rgba(47,139,255,0.55), inset 0 1px 0 rgba(255,255,255,0.28); }
+  50% { box-shadow: 0 8px 22px rgba(10,40,110,0.45), 0 0 0 7px rgba(47,139,255,0), inset 0 1px 0 rgba(255,255,255,0.28); }
+}
+.nav-banner__then {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 3px 8px; border-radius: 10px; background: rgba(0,0,0,0.22);
+}
+.nav-banner__then small { font-size: 8.5px; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.85; }
+.nav-banner__then svg { width: 20px; height: 20px; }
+.nav-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.3px;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--surf-float); border: 1px solid var(--c-border-strong);
+  color: var(--c-ok);
+}
+.nav-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.nav-status[data-tone="warn"] { color: var(--c-warn); }
+.nav-status[data-tone="bad"] { color: var(--c-poor); }
+.nav-alternatives { margin-top: 6px; }
+
+/* ---- NAVIGATION: bottom bar ---- */
+.nav-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  z-index: 7;
+  height: var(--navbar-h);
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 5px 6px 5px 8px;
+  border-radius: 18px;
+  background: var(--surf-float-strong);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--c-border-strong);
+  box-shadow: var(--shadow-card), inset 0 1px 0 var(--glass-highlight);
+}
+.nav-bar[hidden] { display: none; }
+.nav-bar__cell { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 0; padding: 0 8px; line-height: 1.15; }
+.nav-bar__cell + .nav-bar__cell { border-left: 1px solid var(--c-border); }
+.nav-bar__cell strong { font-size: 15px; font-family: var(--font-mono); color: var(--c-white); white-space: nowrap; }
+.nav-bar__cell small { font-size: 9.5px; color: var(--c-silver-dim); letter-spacing: 0.4px; white-space: nowrap; }
+.nav-bar__next { flex: 1.7; flex-direction: row; justify-content: flex-start; gap: 8px; border-left: 0; }
+.nav-bar__icon { flex: 0 0 auto; color: var(--c-nav); display: grid; place-items: center; }
+.nav-bar__icon svg { width: 26px; height: 26px; }
+.nav-bar__stack { display: flex; flex-direction: column; min-width: 0; }
+.nav-bar__stack small { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.nav-bar__eta, .nav-bar__dist { flex: 1; }
+.nav-bar__speed { flex: 0.7; }
+.nav-bar__end {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  margin-left: 4px;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap;
+  background: linear-gradient(180deg, #e8303b, var(--c-red-dark));
+  box-shadow: 0 4px 14px rgba(216,31,42,0.4), inset 0 1px 0 rgba(255,255,255,0.25);
+}
+.nav-bar__end .icon { width: 14px; height: 14px; fill: #fff; }
+.nav-bar__end .short { display: none; }
+.nav-bar__end:active { filter: brightness(0.9); }
+
+/* lift map overlays above the bar while navigating */
+.nav-active .map-controls { bottom: calc(var(--navbar-h) + 18px); }
+.nav-active .map-scale { bottom: calc(var(--navbar-h) + 14px); }
+.nav-active .traffic-legend { bottom: calc(var(--navbar-h) + 40px); }
+.nav-active .resume-follow { bottom: calc(var(--navbar-h) + 18px); }
+
+/* toast must not hide the navigation bar */
+.is-navigating .toast { bottom: calc(var(--bottomnav-h) + var(--navbar-h) + 22px); }
+
+/* ---- Settings helper text ---- */
+.settings-sub { display: block; font-size: 10.5px; color: var(--c-silver-dim); margin-top: 2px; }
+.settings-sub[data-ok="true"] { color: var(--c-ok); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-banner[data-state="TURN_NOW"] { animation: none; }
+}
+
+/* ============================================================
+   LANDSCAPE — compact CSS-grid dashboard. NO scrolling.
+   Left ≈ 33% / map ≈ 67%. Row heights flex, so everything is
+   always visible in ONE viewport (8 target sizes verified).
+   ============================================================ */
+@media (orientation: landscape) {
+  :root { --statusbar-h: clamp(22px, 7vh, 32px); --bottomnav-h: clamp(30px, 9.5vh, 44px); --navbar-h: clamp(44px, 14vh, 56px); }
+
+  .statusbar { padding: 0 10px; font-size: 11px; }
+  .statusbar__clock { font-size: 12px; }
+  .statusbar__right { gap: 10px; }
+  .status-chip .icon { width: 13px; height: 13px; }
+  .status-chip--battery, .status-chip--brightness { font-size: 10px; }
+
+  .bottomnav { padding-bottom: 0; }
+  .bottomnav__item { flex-direction: row; gap: 5px; font-size: 10px; }
+  .bottomnav__item .icon { width: 16px; height: 16px; }
+
+  .panel--gauge {
+    display: grid;
+    grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "speedo cards"
+      "lean   lean"
+      "trip   trip"
+      "weather weather";
+    align-items: stretch;
+    justify-items: stretch;
+    gap: clamp(3px, 1.3vh, 6px) clamp(4px, 1vw, 8px);
+    padding: clamp(4px, 1.6vh, 8px) clamp(5px, 1vw, 9px);
+    overflow: hidden;        /* never scrolls */
+    overflow-y: hidden;
+    max-height: none;
+  }
+  .panel--gauge > * { min-width: 0; min-height: 0; }
+
+  /* speedometer — focal point; sized by the available cell via container units */
+  .speedo-cell {
+    display: grid;
+    place-items: center;
+    grid-area: speedo;
+    container-type: size;
+    min-height: 0;
+    min-width: 0;
+    overflow: visible;
+  }
+  .speedo-cell .speedo {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    max-width: 100%;
+  }
+  @supports (width: 1cqmin) {
+    .speedo-cell .speedo { width: min(100cqw, 100cqh); height: min(100cqw, 100cqh); }
+    .speedo__value { font-size: 27cqmin; letter-spacing: -0.5px; }
+    .speedo__unit { font-size: 6.6cqmin; letter-spacing: 2px; }
+  }
+  @supports not (width: 1cqmin) {
+    .speedo-cell .speedo { width: min(100%, 36vh); height: auto; aspect-ratio: 1 / 1; }
+    .speedo__value { font-size: clamp(22px, 8vh, 40px); }
+    .speedo__unit { font-size: 9px; }
+  }
+
+  /* GPS banner floats over the panel instead of taking a grid row */
+  .gps-banner {
+    position: absolute; left: 6px; right: 6px; top: 4px; z-index: 3;
+    width: auto; padding: 3px 9px; font-size: 10px;
+  }
+
+  /* 2x2 sensor cards beside the speedometer */
+  .panel--gauge > .cardgrid:not(.cardgrid--trip) {
+    grid-area: cards;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: clamp(3px, 1vh, 5px);
+    height: 100%;
+    align-self: stretch;
+  }
+  .panel--gauge > .cardgrid--trip {
+    grid-area: trip;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(3px, 1vh, 5px);
+  }
+  .panel--gauge > .lean-panel { grid-area: lean; }
+  .panel--gauge > .weather-strip { grid-area: weather; margin-top: 0; }
+
+  .mini-card { padding: clamp(2px, 0.9vh, 5px) 3px; gap: 1px; justify-content: center; border-radius: 10px; overflow: hidden; }
+  .mini-card__label { font-size: clamp(8px, 2.3vh, 9.5px); }
+  .mini-card__value { font-size: clamp(10px, 3.5vh, 14px); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .mini-card--resettable .mini-card__value { font-size: clamp(9.5px, 3.1vh, 13px); }
+  .mini-card__quality { font-size: clamp(7px, 1.95vh, 8.5px); padding: 0 5px; margin-top: 0; }
+  .mini-card__reset { font-size: clamp(6.5px, 1.9vh, 8px); padding: 1px 6px; margin-top: 1px; }
+
+  /* lean panel: one slim row */
+  .lean-panel { padding: clamp(2px, 1vh, 5px) 8px; border-radius: 12px; }
+  .lean-panel__visual { width: clamp(30px, 11vh, 46px); height: clamp(30px, 11vh, 46px); }
+  .lean-stat { flex-direction: column; }
+  .lean-stat__label { font-size: clamp(8px, 2.2vh, 9.5px); }
+  .lean-stat__value { font-size: clamp(12px, 4.2vh, 17px); }
+  .lean-stat__dir { font-size: clamp(7.5px, 2vh, 9px); }
+
+  /* weather: icon + temp + label, then wind / rain (units hidden when tight) */
+  .weather-strip { padding: clamp(2px, 1vh, 5px) 10px; gap: 6px; font-size: clamp(9px, 2.8vh, 11px); }
+  .weather-strip__icon { font-size: clamp(11px, 3.6vh, 15px); }
+  .weather-strip__temp { font-size: clamp(10px, 3.3vh, 13px); }
+  .weather-strip__meta { font-size: clamp(8.5px, 2.6vh, 10.5px); }
+  .weather-strip__sep { display: none; }
+
+  /* map overlays scale down with the shorter screen */
+  .map-brand { font-size: 13px; top: 6px; left: 10px; }
+  .map-search { top: 6px; left: 64px; padding: 5px 11px; }
+  .map-search input { font-size: 12px; }
+  .map-categories { top: calc(6px + 32px + 6px); }
+  .chip { font-size: 10.5px; padding: 4px 10px; }
+  .map-controls { right: 8px; bottom: 8px; gap: 5px; }
+  .map-btn { width: clamp(28px, 9.5vh, 36px); height: clamp(28px, 9.5vh, 36px); font-size: 16px; }
+  .map-btn--locate .icon { width: 15px; height: 15px; }
+  .map-scale { bottom: 8px; left: 8px; }
+  .resume-follow { bottom: 10px; padding: 7px 14px; font-size: 11.5px; }
+
+  /* navigation chrome: banner top-left, bar bottom, route stays visible between */
+  .nav-instructions { top: 6px; left: 8px; width: min(62%, 440px); }
+  .nav-banner { padding: 6px 11px; gap: 9px; border-radius: 14px; }
+  .nav-banner__icon svg { width: clamp(28px, 10vh, 38px); height: clamp(28px, 10vh, 38px); }
+  .nav-banner__dist { font-size: clamp(17px, 6.2vh, 24px); }
+  .nav-banner__street { font-size: clamp(10.5px, 3.4vh, 13px); }
+  .nav-bar { left: 8px; right: 8px; bottom: 6px; padding: 4px 5px 4px 7px; border-radius: 16px; }
+  .nav-bar__cell strong { font-size: clamp(11px, 3.9vh, 15px); }
+  .nav-bar__cell small { font-size: clamp(7.5px, 2.3vh, 9.5px); }
+  .nav-bar__icon svg { width: clamp(20px, 7vh, 26px); height: clamp(20px, 7vh, 26px); }
+  .nav-bar__cell { padding: 0 clamp(4px, 1vw, 8px); }
+  .nav-bar__end { padding: 0 clamp(9px, 1.4vw, 14px); font-size: clamp(10px, 3.2vh, 12px); }
+  .nav-active .map-controls { bottom: calc(var(--navbar-h) + 12px); }
+  .nav-active .map-scale { bottom: calc(var(--navbar-h) + 10px); }
+  .nav-active .resume-follow { bottom: calc(var(--navbar-h) + 12px); }
+  .nav-active .traffic-legend { bottom: calc(var(--navbar-h) + 36px); }
+}
+
+/* narrow landscape phones (≈ 640–740 px wide): squeeze the bar, keep every cell */
+@media (orientation: landscape) and (max-width: 899px) {
+  /* narrow dashboard: sensor cards become one slim column so labels are never truncated */
+  .panel--gauge { grid-template-columns: minmax(0, 1.28fr) minmax(0, 1fr); }
+  .panel--gauge > .cardgrid:not(.cardgrid--trip) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+  }
+  .panel--gauge > .cardgrid:not(.cardgrid--trip) .mini-card { padding: 1px 4px; }
+}
+@media (orientation: landscape) and (max-width: 760px) {
+  .nav-bar__end .long { display: none; }
+  .nav-bar__end .short { display: inline; }
+  .nav-bar__next small { display: none; }
+  .nav-bar__speed { display: none; }  /* speed is also on the always-visible speedometer */
+  .weather-strip__meta .u { display: none; }
+  .weather-strip__label { min-width: 0; }
+  .nav-instructions { width: min(66%, 440px); }
+}
+@media (orientation: landscape) and (max-width: 520px) {
+  .nav-bar__dist small { display: none; }
+}
+
+/* very short landscape (≈ 360 px high and below) */
+@media (orientation: landscape) and (max-height: 400px) {
+  .statusbar__clock { font-size: 11px; }
+  .nav-banner__then { display: none; }
+}
+
+/* MapLibre attribution (required by OSM) restyled to match the dark/day glass chrome */
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib {
+  background: var(--surf-legend-a);
+  color: var(--c-silver);
+  border-radius: 999px;
+  font-size: 9px;
+  margin: 0 6px 6px 0;
+}
+.maplibregl-ctrl-attrib a { color: var(--c-silver); }
+.maplibregl-ctrl-attrib-button { filter: invert(0.75); }
+html[data-theme="day"] .maplibregl-ctrl-attrib-button { filter: none; }
+
+/* ============================================================
+   PORTRAIT while navigating: the map gets the larger share
+   (the dashboard keeps its existing portrait scrolling behaviour)
+   ============================================================ */
+@media (orientation: portrait) {
+  .is-navigating .panel--gauge { max-height: 44%; }
+  .is-navigating .speedo { width: min(44%, 150px); }
+  .is-navigating .speedo__value { font-size: clamp(26px, 9vw, 38px); }
+}
+
+/* narrow screens (any orientation): compact bottom bar, nothing overlaps */
+@media (max-width: 480px) {
+  .nav-bar { padding: 4px 4px 4px 6px; }
+  .nav-bar__cell { padding: 0 6px; }
+  .nav-bar__cell strong { font-size: 13px; }
+  .nav-bar__next small { display: none; }
+  .nav-bar__speed { display: none; }
+  .nav-bar__end { padding: 0 12px; }
+  .nav-bar__end .long { display: none; }
+  .nav-bar__end .short { display: inline; }
+  .nav-bar__eta, .nav-bar__dist { flex: 1.1; }
+  .nav-banner__dist { font-size: 23px; }
 }

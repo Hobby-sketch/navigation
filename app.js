@@ -14,7 +14,10 @@ import { MapManager, searchPlaces, searchCategory, CATEGORY_EMOJI } from './map.
 import { SettingsManager } from './settings.js';
 import { TrafficEngine, TRAFFIC_PROVIDERS } from './traffic.js';
 import { WeatherEngine } from './weather.js';
-import { NavigationEngine, formatEta, formatClockTime } from './navigation.js';
+import { NavigationEngine, NAV_STATE, formatEta, formatClockTime } from './navigation.js';
+import { HeadingFusion } from './heading.js';
+import { VoiceGuidance } from './voice.js';
+import { maneuverIconSvg, formatDistance, voiceText, describeManeuver, MANEUVER_TYPE, MANEUVER_STATE } from './maneuver.js';
 import { ThemeManager } from './theme.js';
 import { storage } from './storage.js';
 import {
@@ -24,7 +27,10 @@ import {
 
 let userLat = null;
 let userLng = null;
-let currentHeading = null;
+let currentHeading = null;          // unified vehicleHeading (deg) — see heading.js
+let vehicleHeadingState = { heading: null, confidence: 0, valid: false, source: 'none' };
+let lastSpeedKmh = 0;
+let lastAlongM = 0;
 let pendingDestination = null;
 let activeCategory = null;
 
@@ -38,6 +44,9 @@ const traffic = new TrafficEngine(map);
 const weather = new WeatherEngine();
 const navEngine = new NavigationEngine(map);
 const theme = new ThemeManager();
+const fusion = new HeadingFusion();   // GPS bearing + compass + speed + confidence -> vehicleHeading
+const voice = new VoiceGuidance();
+const panelMapEl = document.querySelector('.panel--map');
 
 /* ---------------- GPS wiring (Smart GPS Engine) ---------------- */
 const gpsBanner = document.getElementById('gps-banner');
@@ -66,7 +75,7 @@ gps.on((data) => {
   // marker smoothly — they must never touch trip/odometer or hit the DOM
   // heavily, to keep this at rAF rate without layout thrashing.
   if (data.kind === 'predicted') {
-    map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving);
+    map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving, data.speedKmh);
     return;
   }
 
@@ -79,12 +88,23 @@ gps.on((data) => {
   userLng = data.longitude;
   theme.setLatLng(data.latitude, data.longitude);
 
+  lastSpeedKmh = data.speedKmh;
+  // Raw GPS bearing goes to the fusion layer (null while stationary / invalid).
+  fusion.setGps({ headingDeg: data.gpsBearing, speedKmh: data.speedKmh, accuracyM: data.accuracy, timestampMs: Date.now() });
+
   speedo.setSpeedKmh(data.speedKmh);
   trip.update(data.latitude, data.longitude, data.accuracy, data.speedKmh, data.isMoving);
-  map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving);
+  map.setMyLocation(data.latitude, data.longitude, data.heading, data.accuracy, data.isMoving, data.speedKmh);
 
   weather.maybeRefresh(data.latitude, data.longitude);
-  navEngine.update(data.latitude, data.longitude, data.speedKmh);
+  navEngine.update(data.latitude, data.longitude, data.speedKmh, {
+    accuracy: data.accuracy,
+    heading: vehicleHeadingState.heading,
+    headingConfidence: vehicleHeadingState.confidence,
+    headingValid: vehicleHeadingState.valid,
+  });
+  const navSpeedEl = document.getElementById('nav-speed');
+  if (navSpeedEl) navSpeedEl.textContent = String(Math.round(speedo.unit === 'mph' ? data.speedKmh * 0.621371 : data.speedKmh));
   traffic.onMotionUpdate(data.isMoving);
 
   document.getElementById('val-altitude').textContent =
@@ -95,49 +115,110 @@ gps.on((data) => {
     data.satelliteEstimate !== null ? String(data.satelliteEstimate) : '--';
   qualityEl.textContent = data.quality ? data.quality[0].toUpperCase() + data.quality.slice(1) : '--';
   qualityEl.dataset.quality = data.quality || '';
-
-  if (currentHeading === null && data.heading !== null) {
-    updateHeadingUI(data.heading);
-  }
 });
 
-/* ---------------- Motion (compass + lean) wiring ---------------- */
-function updateHeadingUI(heading) {
+/* ---------------- Heading Fusion + Motion (compass + lean) wiring ---------------- */
+const headingEl = document.getElementById('val-heading');
+
+function updateHeadingUI(heading, valid = true) {
   currentHeading = heading;
-  document.getElementById('val-heading').textContent = `${compassLabel(heading)} ${Math.round(heading)}°`;
+  headingEl.textContent = heading === null ? '--' : `${compassLabel(heading)} ${Math.round(heading)}°`;
+  headingEl.dataset.conf = valid ? 'ok' : 'low';
 }
 
+// vehicleHeading is THE heading: map arrow, compass UI, Heading-Up bearing,
+// dead reckoning and navigation all read it from here.
+fusion.on((state) => {
+  vehicleHeadingState = state;
+  if (state.heading === null) return;
+  updateHeadingUI(state.heading, state.valid);
+  map.setVehicleHeading(state.heading, state.valid);
+  gps.setVehicleHeading({ heading: state.heading, confidence: state.confidence, valid: state.valid });
+});
+fusion.start(66);
+
 motion.on((evt) => {
-  if (evt.type === 'heading') {
-    updateHeadingUI(evt.heading);
+  if (evt.type === 'compass') {
+    fusion.setCompass({
+      headingDeg: evt.heading,
+      confidence: evt.confidence,
+      source: evt.source === 'relative' ? 'relative' : 'absolute',
+      screenAngle: evt.screenAngle,
+    });
   } else if (evt.type === 'lean') {
-    renderLean(evt.roll, evt.pitch);
+    renderLean(evt);
+  } else if (evt.type === 'calibration') {
+    renderCalibrationState();
   }
 });
 
-function renderLean(roll, pitch) {
-  const panel = document.getElementById('lean-panel');
-  const rollEl = document.getElementById('val-roll');
-  const pitchEl = document.getElementById('val-pitch');
-  const rollDirEl = document.getElementById('val-roll-dir');
-  const pitchDirEl = document.getElementById('val-pitch-dir');
-  const bikeGroup = document.getElementById('lean-bike-group');
+const leanEls = {
+  panel: document.getElementById('lean-panel'),
+  roll: document.getElementById('val-roll'),
+  pitch: document.getElementById('val-pitch'),
+  rollDir: document.getElementById('val-roll-dir'),
+  pitchDir: document.getElementById('val-pitch-dir'),
+  bike: document.getElementById('lean-bike-group'),
+};
+const ROLL_LABEL = { right: 'KANAN', left: 'KIRI', level: 'SEIMBANG' };
+const PITCH_LABEL = { up: 'NAIK', down: 'TURUN', level: 'DATAR' };
 
+function renderLean(evt) {
+  const { roll, pitch } = evt;
   const absRoll = Math.abs(roll);
-  rollEl.textContent = `${absRoll.toFixed(0)}°`;
-  pitchEl.textContent = `${Math.abs(pitch).toFixed(0)}°`;
+  leanEls.roll.textContent = `${absRoll.toFixed(0)}°`;
+  leanEls.pitch.textContent = `${Math.abs(pitch).toFixed(0)}°`;
+  // Direction text comes from the filter's hysteresis (enter ±4°, leave ±2°), so it never flickers.
+  leanEls.rollDir.textContent = ROLL_LABEL[evt.rollDir] || 'SEIMBANG';
+  leanEls.pitchDir.textContent = PITCH_LABEL[evt.pitchDir] || 'DATAR';
 
-  rollDirEl.textContent = roll > 3 ? 'KANAN' : roll < -3 ? 'KIRI' : 'SEIMBANG';
-  pitchDirEl.textContent = pitch > 3 ? 'NAIK' : pitch < -3 ? 'TURUN' : 'DATAR';
-
+  // Indicator of vehicle inclination only — not an absolute safety claim.
   let state = 'safe';
   if (absRoll >= 30) state = 'danger';
   else if (absRoll >= 15) state = 'warn';
-  panel.dataset.state = state;
+  leanEls.panel.dataset.state = state;
+  leanEls.panel.dataset.conf = evt.confidence < 0.4 ? 'low' : 'ok';
+  leanEls.panel.dataset.cal = evt.calibrated ? 'true' : 'false';
 
-  const clampedRoll = Math.max(-45, Math.min(45, roll));
-  bikeGroup.style.transform = `rotate(${clampedRoll}deg)`;
+  // Rotation pivot (tyre contact point) is set in CSS on #lean-bike-group.
+  leanEls.bike.style.transform = `rotate(${Math.max(-45, Math.min(45, roll)).toFixed(1)}deg)`;
 }
+
+/* ---- mount calibration ---- */
+const calStatusEl = document.getElementById('cal-status');
+function renderCalibrationState() {
+  const cal = motion.getCalibration();
+  leanEls.panel.dataset.cal = motion.isCalibrated() ? 'true' : 'false';
+  if (!calStatusEl) return;
+  if (cal) {
+    const d = new Date(cal.ts);
+    calStatusEl.textContent = `Terkalibrasi · ${d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
+    calStatusEl.dataset.ok = 'true';
+  } else {
+    calStatusEl.textContent = 'Belum dikalibrasi';
+    calStatusEl.dataset.ok = 'false';
+  }
+}
+
+let calibrating = false;
+async function runCalibration() {
+  if (calibrating) return;
+  if (lastSpeedKmh > 5) { showToast('Berhenti dulu untuk kalibrasi'); return; }
+  calibrating = true;
+  showToast('Kalibrasi... tahan HP & tegakkan motor 1 detik', 1500);
+  const res = await motion.calibrate();
+  calibrating = false;
+  if (res.ok) showToast('Kalibrasi tersimpan');
+  else if (res.reason === 'moving') showToast('Motor bergerak — diamkan lalu coba lagi');
+  else if (res.reason === 'no-sensor' || res.reason === 'no-data') showToast('Sensor belum siap. Pastikan izin sensor aktif');
+}
+document.getElementById('btn-calibrate').addEventListener('click', runCalibration);
+document.getElementById('btn-calibrate-settings').addEventListener('click', runCalibration);
+document.getElementById('btn-reset-calibration').addEventListener('click', () => {
+  motion.resetCalibration();
+  showToast('Kalibrasi direset');
+});
+renderCalibrationState();
 
 /* ---------------- Trip / odometer wiring ---------------- */
 function renderTrip(state) {
@@ -198,6 +279,16 @@ function selectPlace(name, lat, lon) {
   showToast(`Tujuan: ${name}`);
 }
 
+/** Select the place AND start navigating to it right away. */
+function routeToPlace(name, lat, lon) {
+  selectPlace(name, lat, lon);
+  if (userLat === null) {
+    showToast('Menunggu sinyal GPS untuk memulai rute...');
+    return;
+  }
+  switchView('navigasi', { onEnter: onViewEnter });
+}
+
 /** Shown when the search box is focused and empty: quick access to recent
  *  searches and saved favorites (persisted via storage.js). */
 function renderSuggestions() {
@@ -221,7 +312,7 @@ function renderSuggestions() {
   if (history.length) html += `<div class="map-search__section-title">Riwayat Pencarian</div>${rowsHtml(history, favKeySet)}`;
   searchResultsEl.innerHTML = html;
   searchResultsEl.classList.add('show');
-  bindResultRows();
+  bindResultRows(true);
 }
 
 function renderSearchResults(results) {
@@ -245,10 +336,15 @@ function renderSearchResults(results) {
   bindResultRows();
 }
 
-function bindResultRows() {
+/** `direct` rows (history / favourites) start routing immediately on tap;
+ *  regular search results keep the existing select-then-navigate behaviour. */
+function bindResultRows(direct = false) {
   searchResultsEl.querySelectorAll('.map-search__result[data-lat]').forEach((el) => {
     const lat = parseFloat(el.dataset.lat), lon = parseFloat(el.dataset.lon), name = el.dataset.name;
-    el.querySelector('.map-search__result-text')?.addEventListener('click', () => selectPlace(name, lat, lon));
+    el.querySelector('.map-search__result-text')?.addEventListener('click', () => {
+      if (direct) routeToPlace(name, lat, lon);
+      else selectPlace(name, lat, lon);
+    });
     el.querySelector('.map-search__star')?.addEventListener('click', (e) => {
       e.stopPropagation();
       const nowFav = storage.toggleFavorite({ name, lat, lon });
@@ -334,11 +430,74 @@ resumeFollowBtn.addEventListener('click', () => {
 // following starts/stops, whether triggered by a button or by the user
 // dragging/zooming/rotating the map themselves.
 map.on((evt) => {
-  if (evt.type !== 'follow-change') return;
-  locateBtn.classList.toggle('active', evt.following);
-  resumeFollowBtn.hidden = evt.following;
-  if (userLat !== null) showToast(evt.following ? 'Mengikuti lokasi GPS' : 'Berhenti mengikuti lokasi');
+  if (evt.type === 'follow-change') {
+    locateBtn.classList.toggle('active', evt.following);
+    resumeFollowBtn.hidden = evt.following;
+    if (userLat !== null) showToast(evt.following ? 'Mengikuti lokasi GPS' : 'Berhenti mengikuti lokasi');
+  } else if (evt.type === 'pick-destination') {
+    // Map tap or POI popup -> "Jadikan Tujuan"
+    selectPlace(evt.name, evt.lat, evt.lon);
+    if (navEngine.isActive && userLat !== null) {
+      switchView('navigasi', { onEnter: onViewEnter }); // already navigating: re-route to the new target
+    } else {
+      showToast(`Tujuan: ${evt.name} — ketuk Navigasi untuk mulai`);
+    }
+  } else if (evt.type === 'navmode-change') {
+    renderNavModeUi(evt.mode);
+  } else if (evt.type === 'bearing') {
+    renderCompassButton();
+  }
 });
+
+/* ---- North Up / Heading Up ---- */
+const navModeBtn = document.getElementById('btn-navmode');
+const compassArrow = document.getElementById('compass-arrow');
+const compassLabelEl = document.getElementById('compass-label');
+const navModeGroup = document.getElementById('setting-navmode');
+
+function renderCompassButton() {
+  // The arrow always shows where NORTH is relative to the screen.
+  compassArrow.style.transform = `rotate(${(-map.map.getBearing()).toFixed(1)}deg)`;
+}
+function renderNavModeUi(mode) {
+  navModeBtn.dataset.mode = mode;
+  compassLabelEl.textContent = mode === 'heading' ? 'H' : 'N';
+  navModeBtn.setAttribute('aria-label', mode === 'heading' ? 'Heading Up (ketuk untuk North Up)' : 'North Up (ketuk untuk Heading Up)');
+  navModeGroup.querySelectorAll('.segmented__btn').forEach((b) => b.classList.toggle('active', b.dataset.navmode === mode));
+  renderCompassButton();
+}
+function applyNavMode(mode) {
+  map.setNavMode(mode);
+  storage.updateSetting('navMode', mode);
+  showToast(mode === 'heading' ? 'Heading Up: peta mengikuti arah motor' : 'North Up: utara di atas');
+}
+navModeBtn.addEventListener('click', () => applyNavMode(map.navMode === 'north' ? 'heading' : 'north'));
+navModeGroup.querySelectorAll('.segmented__btn').forEach((btn) => {
+  btn.addEventListener('click', () => applyNavMode(btn.dataset.navmode));
+});
+
+// Restore saved preferences without moving the camera.
+(function restoreNavPrefs() {
+  const saved = storage.getSettings();
+  map.setNavMode(saved.navMode === 'heading' ? 'heading' : 'north', { engage: false });
+  renderNavModeUi(map.navMode);
+  const autoZoomToggle = document.getElementById('setting-autozoom');
+  map.setAutoZoom(saved.autoZoom !== false);
+  autoZoomToggle.checked = saved.autoZoom !== false;
+  autoZoomToggle.addEventListener('change', () => {
+    map.setAutoZoom(autoZoomToggle.checked);
+    storage.updateSetting('autoZoom', autoZoomToggle.checked);
+  });
+  const voiceToggle = document.getElementById('setting-voice');
+  voiceToggle.checked = voice.enabled;
+  voiceToggle.addEventListener('change', () => {
+    voice.setEnabled(voiceToggle.checked);
+    if (voiceToggle.checked) voice.say('Panduan suara aktif.', { urgent: true });
+  });
+})();
+
+// Speech needs a user gesture on iOS/Safari: unlock on the first tap anywhere.
+document.addEventListener('pointerdown', () => voice.unlock(), { once: true });
 
 /* ---------------- Traffic Engine ---------------- */
 const trafficBtn = document.getElementById('btn-traffic');
@@ -422,52 +581,205 @@ traffic.on((evt) => {
   trafficEnabledToggle.checked = !!settings.enabled;
 })();
 
-/* ---------------- Navigation Engine wiring ---------------- */
-const navTextEl = document.getElementById('nav-instructions-text');
-const navStatsEl = document.getElementById('nav-instructions-stats');
-const navRemainingEl = document.getElementById('nav-remaining');
-const navEtaEl = document.getElementById('nav-eta');
-const navArrivalEl = document.getElementById('nav-arrival');
-const navAltEl = document.getElementById('nav-alternatives');
+/* ---------------- Navigation Engine wiring (turn-by-turn UI + voice) ---------------- */
+const navEls = {
+  banner: document.getElementById('nav-banner'),
+  icon: document.getElementById('nav-icon'),
+  dist: document.getElementById('nav-dist'),
+  street: document.getElementById('nav-street'),
+  then: document.getElementById('nav-then'),
+  thenIcon: document.getElementById('nav-then-icon'),
+  status: document.getElementById('nav-status'),
+  alt: document.getElementById('nav-alternatives'),
+  bar: document.getElementById('nav-bar'),
+  nextIcon: document.getElementById('nav-next-icon'),
+  nextDist: document.getElementById('nav-next-dist'),
+  nextStreet: document.getElementById('nav-next-street'),
+  remaining: document.getElementById('nav-remaining'),
+  eta: document.getElementById('nav-eta'),
+  arrival: document.getElementById('nav-arrival'),
+  endBtn: document.getElementById('btn-end-nav'),
+};
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+let arrivedTimer = null;
+
+function setNavUiActive(active) {
+  panelMapEl.classList.toggle('nav-active', active);
+  document.body.classList.toggle('is-navigating', active);
+  navEls.bar.hidden = !active;
+  map.setNavigating(active);
+}
+
+function setNavStatus(text, tone = 'ok') {
+  if (!text) { navEls.status.hidden = true; return; }
+  navEls.status.hidden = false;
+  navEls.status.textContent = text;
+  navEls.status.dataset.tone = tone;
+}
+
+function resetNavUi(message = 'Cari tujuan untuk memulai navigasi') {
+  clearTimeout(arrivedTimer);
+  setNavUiActive(false);
+  navEls.banner.dataset.state = 'idle';
+  navEls.icon.innerHTML = '';
+  navEls.dist.textContent = '--';
+  navEls.street.textContent = message;
+  navEls.then.hidden = true;
+  navEls.alt.hidden = true;
+  navEls.alt.innerHTML = '';
+  setNavStatus('');
+}
 
 function renderAlternatives() {
-  if (!navEngine.alternatives.length) { navAltEl.hidden = true; navAltEl.innerHTML = ''; return; }
-  navAltEl.hidden = false;
-  navAltEl.innerHTML = navEngine.alternatives.map((alt, i) => {
+  if (!navEngine.alternatives.length) { navEls.alt.hidden = true; navEls.alt.innerHTML = ''; return; }
+  navEls.alt.hidden = false;
+  navEls.alt.innerHTML = navEngine.alternatives.map((alt, i) => {
     const km = (alt.distanceM / 1000).toFixed(1);
     const min = Math.round(alt.durationS / 60);
     return `<button type="button" class="nav-alternatives__btn" data-idx="${i}">Rute ${i + 2} · ${km} km · ${min} mnt</button>`;
   }).join('');
-  navAltEl.querySelectorAll('.nav-alternatives__btn').forEach((btn) => {
+  navEls.alt.querySelectorAll('.nav-alternatives__btn').forEach((btn) => {
     btn.addEventListener('click', () => navEngine.selectAlternative(Number(btn.dataset.idx)));
   });
 }
 
-navEngine.on((evt) => {
-  if (evt.type === 'route-ready') {
-    const km = (evt.route.distanceM / 1000).toFixed(1);
-    const min = Math.round(evt.route.durationS / 60);
-    navTextEl.textContent = `${pendingDestination?.name || 'Tujuan'} — ${km} km · ${min} menit`;
-    renderAlternatives();
-  } else if (evt.type === 'routing-failed') {
-    navTextEl.textContent = 'Rute tidak ditemukan. Coba lagi.';
-    navStatsEl.hidden = true;
-  } else if (evt.type === 'progress') {
-    navStatsEl.hidden = false;
-    navRemainingEl.textContent = `${evt.remainingKm.toFixed(1)} km`;
-    navEtaEl.textContent = formatEta(evt.etaSec);
-    navArrivalEl.textContent = formatClockTime(evt.arrival);
-  } else if (evt.type === 'rerouting') {
-    showToast('GPS keluar dari rute — mencari rute baru...');
-  } else if (evt.type === 'rerouted') {
-    showToast('Rute diperbarui');
-  } else if (evt.type === 'arrived') {
-    showToast('Anda telah tiba di tujuan');
-    navStatsEl.hidden = true;
-    navAltEl.hidden = true;
-    navTextEl.textContent = 'Cari tujuan untuk memulai navigasi';
-    pendingDestination = null;
+/** Banner + "next turn" cell from the maneuver engine state. */
+function renderManeuver(evt) {
+  const m = evt.current;
+  if (!m) return;
+  const turnNow = evt.state === MANEUVER_STATE.TURN_NOW;
+  const verb = cap(describeManeuver(m));
+  navEls.banner.dataset.state = evt.navState === NAV_STATE.ARRIVED ? 'arrived' : (turnNow ? 'TURN_NOW' : 'on');
+  navEls.icon.innerHTML = maneuverIconSvg(m.type, { size: 40 });
+
+  if (m.type === MANEUVER_TYPE.DESTINATION) {
+    navEls.dist.textContent = turnNow ? 'Tiba' : formatDistance(evt.distanceM);
+    navEls.street.textContent = pendingDestination?.name || 'Tujuan Anda';
+  } else {
+    navEls.dist.textContent = turnNow ? 'Sekarang' : formatDistance(evt.distanceM);
+    navEls.street.textContent = turnNow
+      ? `${verb} sekarang`
+      : (m.streetName ? `${verb} ke ${m.streetName}` : verb);
   }
+
+  // "Lalu ..." preview when the following maneuver is close behind this one
+  const nx = evt.next;
+  if (nx && nx.type !== MANEUVER_TYPE.DESTINATION && nx.offsetM - m.offsetM < 300) {
+    navEls.then.hidden = false;
+    navEls.thenIcon.innerHTML = maneuverIconSvg(nx.type, { size: 20 });
+  } else {
+    navEls.then.hidden = true;
+  }
+
+  // bottom bar: NEXT TURN = the maneuver after the active one (or the active one if it is last)
+  const target = nx || m;
+  navEls.nextIcon.innerHTML = maneuverIconSvg(target.type, { size: 26 });
+  navEls.nextDist.textContent = formatDistance(Math.max(0, target.offsetM - lastAlongM));
+  navEls.nextStreet.textContent = target.type === MANEUVER_TYPE.DESTINATION ? 'Tujuan' : (target.streetName || cap(describeManeuver(target)));
+
+  map.setNextManeuverDistance(evt.distanceM);
+}
+
+navEngine.on((evt) => {
+  switch (evt.type) {
+    case 'routing-start':
+      if (!evt.reroute) {
+        navEls.banner.dataset.state = 'idle';
+        navEls.street.textContent = `Menghitung rute ke ${pendingDestination?.name || 'tujuan'}...`;
+      }
+      break;
+
+    case 'route-ready': {
+      clearTimeout(arrivedTimer);
+      setNavUiActive(true);
+      const km = (evt.route.distanceM / 1000).toFixed(1);
+      const min = Math.round(evt.route.durationS / 60);
+      navEls.remaining.textContent = formatDistance(evt.route.distanceM);
+      navEls.eta.textContent = formatEta(evt.route.durationS);
+      navEls.arrival.textContent = formatClockTime(new Date(Date.now() + evt.route.durationS * 1000));
+      setNavStatus('DALAM RUTE', 'ok');
+      renderAlternatives();
+      lastAlongM = 0;
+      if (!evt.reroute) {
+        voice.reset();
+        // overview first (fitBounds in the engine), then settle into the follow camera
+        setTimeout(() => { if (navEngine.isActive && !map.isFollowing()) map.toggleFollow(true); }, 2200);
+        showToast(`${km} km · ${min} menit`);
+      }
+      break;
+    }
+
+    case 'routing-failed':
+      if (evt.reroute) {
+        showToast('Gagal menghitung ulang rute');
+      } else {
+        resetNavUi('Rute tidak ditemukan. Coba lagi.');
+      }
+      break;
+
+    case 'maneuver':
+      renderManeuver(evt);
+      break;
+
+    case 'progress': {
+      lastAlongM = evt.alongM;
+      navEls.remaining.textContent = formatDistance(evt.remainingM);
+      navEls.eta.textContent = formatEta(evt.etaSec);
+      navEls.arrival.textContent = formatClockTime(evt.arrival);
+      if (evt.state === NAV_STATE.ARRIVED) break;
+      if (evt.offRouteState === 'confirmed') { setNavStatus('MENGHITUNG ULANG...', 'bad'); navEls.banner.dataset.state = 'off'; }
+      else if (evt.offRouteState === 'suspect') { setNavStatus('MENJAUH DARI RUTE', 'warn'); }
+      else if (evt.state === NAV_STATE.APPROACHING_DESTINATION) { setNavStatus('HAMPIR TIBA', 'ok'); }
+      else { setNavStatus('DALAM RUTE', 'ok'); if (navEls.banner.dataset.state === 'off') navEls.banner.dataset.state = 'on'; }
+      break;
+    }
+
+    case 'announce':
+      voice.say(voiceText(evt.maneuver, evt.stage, evt.distanceM), {
+        key: `${navEngine.route?.uid ?? 0}:${evt.maneuver.id}:${evt.stage}`,
+        urgent: evt.stage === 'now',
+      });
+      break;
+
+    case 'rerouting':
+      showToast('Keluar dari rute — menghitung ulang...');
+      voice.say('Anda keluar dari rute. Menghitung ulang.', { key: `reroute:${Date.now()}`, urgent: true });
+      break;
+
+    case 'rerouted':
+      showToast('Rute diperbarui');
+      break;
+
+    case 'approaching-destination':
+      voice.say('Anda hampir tiba.', { key: `${navEngine.route?.uid ?? 0}:approach` });
+      break;
+
+    case 'arrived':
+      voice.say('Anda telah tiba.', { key: `arrived:${Date.now()}`, urgent: true });
+      showToast('Anda telah tiba di tujuan');
+      navEls.banner.dataset.state = 'arrived';
+      navEls.dist.textContent = 'Tiba';
+      navEls.street.textContent = pendingDestination?.name || 'Tujuan Anda';
+      setNavStatus('SAMPAI', 'ok');
+      pendingDestination = null;
+      arrivedTimer = setTimeout(() => { resetNavUi(); switchView('home', { onEnter: onViewEnter }); }, 6000);
+      break;
+
+    case 'cancelled':
+      voice.cancel();
+      pendingDestination = null;
+      resetNavUi();
+      break;
+
+    default:
+      break;
+  }
+});
+
+navEls.endBtn.addEventListener('click', () => {
+  navEngine.cancel();
+  switchView('home', { onEnter: onViewEnter });
+  showToast('Navigasi diakhiri');
 });
 
 /* ---------------- Bottom navigation ---------------- */
@@ -480,11 +792,9 @@ document.querySelectorAll('.bottomnav__item').forEach((btn) => {
 async function onViewEnter(view) {
   if (view === 'navigasi') {
     if (pendingDestination && userLat !== null) {
-      navTextEl.textContent = `Menghitung rute ke ${pendingDestination.name}...`;
-      navStatsEl.hidden = true;
       await navEngine.startTo(pendingDestination.lat, pendingDestination.lon, pendingDestination.name, userLat, userLng);
-    } else {
-      navTextEl.textContent = 'Cari tujuan untuk memulai navigasi';
+    } else if (!navEngine.isActive) {
+      navEls.street.textContent = pendingDestination ? 'Menunggu sinyal GPS...' : 'Cari tujuan untuk memulai navigasi';
     }
   } else if (view === 'riwayat') {
     renderHistoryView();
@@ -574,8 +884,10 @@ function initMotionGate() {
   if (motion.needsPermission) {
     const gate = () => {
       motion.requestPermission().then((granted) => {
-        if (granted) motion.start();
-        else showToast('Izin sensor kemiringan & kompas ditolak');
+        if (!granted) showToast('Izin sensor kemiringan & kompas ditolak');
+        // Listeners are passive: attaching them is harmless when denied and makes
+        // browsers that expose requestPermission() but still stream events (newer Chrome) work.
+        motion.start();
       });
       document.removeEventListener('click', gate);
       document.removeEventListener('touchstart', gate);
@@ -588,6 +900,11 @@ function initMotionGate() {
   }
 }
 
+/* ---------------- Orientation / resize: keep the map canvas in sync ---------------- */
+const resizeMap = debounce(() => map.map.resize(), 120);
+window.addEventListener('resize', resizeMap);
+window.addEventListener('orientationchange', () => { resizeMap(); setTimeout(() => map.map.resize(), 400); });
+
 /* ---------------- Service worker ---------------- */
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
@@ -596,6 +913,9 @@ function registerServiceWorker() {
     });
   }
 }
+
+/* Diagnostics handle (read-only use): lets tests / the console inspect live engine state. */
+window.__beat = { gps, motion, fusion, map, navEngine, voice, theme };
 
 /* ---------------- Boot ---------------- */
 (async function main() {
@@ -608,6 +928,10 @@ function registerServiceWorker() {
 
   startSensors();
   initMotionGate();
+
+  // PWA shortcuts (manifest.json) open ./index.html?view=navigasi | riwayat
+  const shortcutView = new URLSearchParams(location.search).get('view');
+  if (['navigasi', 'riwayat', 'pengaturan', 'cari'].includes(shortcutView)) switchView(shortcutView, { onEnter: onViewEnter });
 
   const trafficSettings = storage.getTrafficSettings();
   if (trafficSettings.enabled && traffic.hasAnyProviderConfigured(trafficSettings.apiKeys)) {

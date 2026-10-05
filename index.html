@@ -73,10 +73,11 @@
   <!-- MAIN DASHBOARD -->
   <main class="dashboard" id="view-home">
 
-    <!-- LEFT PANEL 40% -->
+    <!-- LEFT PANEL ~33% (landscape: compact grid, never scrolls) -->
     <section class="panel panel--gauge surface-premium" aria-label="Speedometer dan sensor">
 
       <!-- Analog + digital speedometer -->
+      <div class="speedo-cell">
       <div class="speedo" id="speedo">
         <svg viewBox="0 0 300 300" class="speedo__svg" id="speedo-svg">
           <defs>
@@ -99,6 +100,7 @@
           <span class="speedo__value" id="speed-value">0</span>
           <span class="speedo__unit" id="speed-unit">km/h</span>
         </div>
+      </div>
       </div>
 
       <div class="gps-banner" id="gps-banner" hidden>
@@ -128,29 +130,36 @@
       </div>
 
       <!-- Lean angle panel -->
-      <div class="lean-panel" id="lean-panel" data-state="safe">
+      <div class="lean-panel" id="lean-panel" data-state="safe" data-cal="false">
         <div class="lean-panel__visual">
+          <!-- Rear view of the bike. Everything inside #lean-bike-group rotates about the
+               tyre/ground contact point (70,124); the ground line stays fixed. -->
           <svg viewBox="0 0 140 140" id="lean-bike-svg" class="lean-bike">
             <g id="lean-bike-group">
-              <rect x="60" y="30" width="20" height="80" rx="8" class="lean-bike__body"/>
-              <circle cx="70" cy="118" r="14" class="lean-bike__wheel"/>
-              <rect x="40" y="26" width="60" height="10" rx="5" class="lean-bike__bar"/>
+              <rect x="63.5" y="92" width="13" height="32" rx="6.5" class="lean-bike__tire"/>
+              <rect x="58" y="60" width="24" height="40" rx="10" class="lean-bike__body"/>
+              <rect x="66.5" y="44" width="7" height="20" rx="3" class="lean-bike__body"/>
+              <rect x="36" y="40" width="68" height="8" rx="4" class="lean-bike__bar"/>
+              <circle cx="70" cy="88" r="3.2" class="lean-bike__light"/>
             </g>
             <line x1="10" y1="124" x2="130" y2="124" class="lean-bike__ground"/>
           </svg>
         </div>
         <div class="lean-panel__data">
-          <div class="lean-stat">
+          <div class="lean-stat lean-stat--roll">
             <span class="lean-stat__label">ROLL</span>
             <span class="lean-stat__value" id="val-roll">0°</span>
             <span class="lean-stat__dir" id="val-roll-dir">SEIMBANG</span>
           </div>
-          <div class="lean-stat">
+          <div class="lean-stat lean-stat--pitch">
             <span class="lean-stat__label">PITCH</span>
             <span class="lean-stat__value" id="val-pitch">0°</span>
             <span class="lean-stat__dir" id="val-pitch-dir">DATAR</span>
           </div>
         </div>
+        <button type="button" class="lean-panel__cal" id="btn-calibrate" aria-label="Kalibrasi posisi HP" title="Kalibrasi posisi HP di motor">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.9 3A9 9 0 0 0 13 3.1V1h-2v2.1A9 9 0 0 0 3.1 11H1v2h2.1A9 9 0 0 0 11 20.9V23h2v-2.1a9 9 0 0 0 7.9-7.9H23v-2zM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>
+        </button>
       </div>
 
       <!-- Odometer / Trip -->
@@ -176,12 +185,12 @@
         <span class="weather-strip__temp" id="weather-temp">--°</span>
         <span class="weather-strip__label" id="weather-label">Memuat cuaca...</span>
         <span class="weather-strip__sep">·</span>
-        <span class="weather-strip__meta">💨 <span id="weather-wind">--</span> km/h</span>
-        <span class="weather-strip__meta">☔ <span id="weather-rain">--</span>%</span>
+        <span class="weather-strip__meta">💨 <span id="weather-wind">--</span><span class="u"> km/h</span></span>
+        <span class="weather-strip__meta">☔ <span id="weather-rain">--</span><span class="u">%</span></span>
       </div>
     </section>
 
-    <!-- RIGHT PANEL 60% -->
+    <!-- RIGHT PANEL ~67% (map stays the largest area) -->
     <section class="panel panel--map" aria-label="Peta navigasi">
       <div class="map-brand">Be<span>AT</span></div>
 
@@ -203,15 +212,17 @@
         <button class="chip" data-cat="parkir">🅿️ Parkir</button>
       </div>
 
+      <!-- Turn-by-turn banner (top of map) -->
       <div class="nav-instructions" id="nav-instructions">
-        <div class="nav-instructions__main">
-          <span id="nav-instructions-text">Cari tujuan untuk memulai navigasi</span>
+        <div class="nav-banner" id="nav-banner" data-state="idle">
+          <div class="nav-banner__icon" id="nav-icon" aria-hidden="true"></div>
+          <div class="nav-banner__text">
+            <div class="nav-banner__dist" id="nav-dist">--</div>
+            <div class="nav-banner__street" id="nav-street">Cari tujuan untuk memulai navigasi</div>
+          </div>
+          <div class="nav-banner__then" id="nav-then" hidden><small>Lalu</small><span id="nav-then-icon"></span></div>
         </div>
-        <div class="nav-instructions__stats" id="nav-instructions-stats" hidden>
-          <span class="nav-stat"><strong id="nav-remaining">-- km</strong><small>Sisa Jarak</small></span>
-          <span class="nav-stat"><strong id="nav-eta">-- menit</strong><small>ETA</small></span>
-          <span class="nav-stat"><strong id="nav-arrival">--:--</strong><small>Tiba</small></span>
-        </div>
+        <div class="nav-status" id="nav-status" hidden></div>
         <div class="nav-alternatives" id="nav-alternatives" hidden></div>
       </div>
 
@@ -222,11 +233,42 @@
         Kembali Ikuti
       </button>
 
+      <!-- Navigation bottom bar: next turn | ETA | distance | speed | end -->
+      <div class="nav-bar" id="nav-bar" hidden>
+        <div class="nav-bar__cell nav-bar__next">
+          <span class="nav-bar__icon" id="nav-next-icon" aria-hidden="true"></span>
+          <span class="nav-bar__stack">
+            <strong id="nav-next-dist">--</strong>
+            <small id="nav-next-street">Belok berikutnya</small>
+          </span>
+        </div>
+        <div class="nav-bar__cell nav-bar__eta">
+          <strong id="nav-eta">-- menit</strong>
+          <small id="nav-arrival">--:--</small>
+        </div>
+        <div class="nav-bar__cell nav-bar__dist">
+          <strong id="nav-remaining">-- km</strong>
+          <small>Sisa Jarak</small>
+        </div>
+        <div class="nav-bar__cell nav-bar__speed">
+          <strong id="nav-speed">0</strong>
+          <small id="nav-speed-unit">km/h</small>
+        </div>
+        <button type="button" class="nav-bar__end" id="btn-end-nav">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/></svg>
+          <span class="long">Akhiri Navigasi</span><span class="short">Akhiri</span>
+        </button>
+      </div>
+
       <div class="traffic-legend" id="traffic-legend" hidden>
         <span>🟢 Lancar</span><span>🟡 Padat</span><span>🔴 Macet</span><span>🟣 Sangat Macet</span>
       </div>
 
       <div class="map-controls">
+        <button class="map-btn map-btn--compass" id="btn-navmode" aria-label="Mode peta: North Up / Heading Up" data-mode="north">
+          <svg viewBox="0 0 24 24" class="icon compass-arrow" id="compass-arrow"><path d="M12 2.5 17 14l-5-2.2L7 14z"/></svg>
+          <span class="compass-label" id="compass-label">N</span>
+        </button>
         <button class="map-btn" id="btn-zoom-in" aria-label="Perbesar">+</button>
         <button class="map-btn" id="btn-zoom-out" aria-label="Perkecil">−</button>
         <button class="map-btn map-btn--traffic" id="btn-traffic" aria-label="Traffic">
@@ -283,6 +325,34 @@
         </div>
       </div>
       <p class="settings-note">Otomatis mengikuti waktu matahari terbit/terbenam di lokasi Anda (dihitung dari GPS). Bisa juga diganti cepat lewat ikon matahari/bulan di status bar.</p>
+    </div>
+
+    <div class="settings-group">
+      <h3>Navigasi &amp; Sensor</h3>
+      <div class="settings-row">
+        <span>Panduan Suara</span>
+        <label class="switch"><input type="checkbox" id="setting-voice" checked><span class="switch__slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>Mode Peta</span>
+        <div class="segmented" id="setting-navmode">
+          <button data-navmode="north" class="segmented__btn active">North Up</button>
+          <button data-navmode="heading" class="segmented__btn">Heading Up</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span>Auto Zoom (mengikuti kecepatan)</span>
+        <label class="switch"><input type="checkbox" id="setting-autozoom" checked><span class="switch__slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>Kalibrasi Posisi HP<small class="settings-sub" id="cal-status">Belum dikalibrasi</small></span>
+        <button class="btn-secondary" id="btn-calibrate-settings">Kalibrasi</button>
+      </div>
+      <div class="settings-row">
+        <span>Reset Kalibrasi</span>
+        <button class="btn-danger" id="btn-reset-calibration">Reset</button>
+      </div>
+      <p class="settings-note">Kalibrasi: pasang HP di holder, tegakkan motor di permukaan datar, diamkan, lalu tekan Kalibrasi. Nilai kemiringan hanyalah indikator posisi kendaraan, bukan alat ukur keselamatan.</p>
     </div>
 
     <div class="settings-group">

@@ -26,6 +26,8 @@ const MAX_PLAUSIBLE_KMH = 220;    // discard fixes implying an impossible speed 
 const STATIONARY_SPEED_KMH = 1.5; // below this we consider the vehicle stopped
 const STATIONARY_HOLD_MS = 4000;  // how long stopped before drift-lock engages
 const PREDICT_MAX_SEC = 2.5;      // cap on dead-reckoning extrapolation
+const PREDICT_MAX_DIST_M = 30;    // never extrapolate further than this from the last real fix
+const PREDICT_MIN_CONFIDENCE = 0.25; // below this heading confidence we hold position instead of guessing
 const PREDICT_EMIT_MS = 50;       // ~20fps emit rate for the prediction loop (perf)
 const STATIONARY_EMIT_MS = 2000;  // throttle "fix" emits while parked
 
@@ -146,6 +148,16 @@ export class GPSManager {
     this._predictRafId = null;
     this._lastPredictEmit = 0;
     this._lastConfirmed = null; // {lat, lon, timestampMs, speedKmh, heading, accuracy}
+    this._lastGpsBearing = null;
+    this._vehicleHeading = null; // {heading, confidence, valid} from HeadingFusion (single heading source)
+  }
+
+  /**
+   * Feed the unified vehicleHeading (heading.js). Dead reckoning uses it in
+   * preference to the raw GPS bearing.
+   */
+  setVehicleHeading({ heading, confidence = 0, valid = false } = {}) {
+    this._vehicleHeading = Number.isFinite(heading) ? { heading, confidence, valid, at: Date.now() } : null;
   }
 
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -242,6 +254,8 @@ export class GPSManager {
       bearing = this._bearing(this._lastRawPoint.lat, this._lastRawPoint.lon, latitude, longitude);
     }
     const smoothedHeading = bearing !== null ? this._headingSmoother.push(bearing) : this._headingSmoother.value;
+    // Raw (unsmoothed) bearing for the heading-fusion layer; only meaningful while actually moving.
+    const gpsBearing = bearing !== null && this._speedSmoothed > 3 ? ((bearing % 360) + 360) % 360 : null;
 
     // --- Drift compensation: lock the dot when truly stationary -----------
     let outLat = filtered.lat, outLng = filtered.lng;
@@ -270,6 +284,7 @@ export class GPSManager {
       lat: outLat, lon: outLng, timestampMs: now,
       speedKmh: this._speedSmoothed, heading: smoothedHeading, accuracy,
     };
+    this._lastGpsBearing = gpsBearing;
 
     // --- Adaptive update rate: throttle emits while parked to save CPU ----
     const minInterval = this.isMoving ? 0 : STATIONARY_EMIT_MS;
@@ -284,6 +299,7 @@ export class GPSManager {
       altitude: this._lastAltitude,
       accuracy: this._lastAccuracy,
       heading: smoothedHeading,
+      gpsBearing,
       speedKmh: this._speedSmoothed,
       satelliteEstimate: this._estimateSatellites(accuracy),
       quality: this.quality,
@@ -302,14 +318,30 @@ export class GPSManager {
       this._lastPredictEmit = ts;
 
       const now = Date.now();
-      const dtSec = Math.min(PREDICT_MAX_SEC, Math.max(0, (now - this._lastConfirmed.timestampMs) / 1000));
+      const fix = this._lastConfirmed;
+      const ageSec = Math.max(0, (now - fix.timestampMs) / 1000);
 
-      let lat = this._lastConfirmed.lat, lon = this._lastConfirmed.lon;
-      if (this.isMoving && typeof this._lastConfirmed.heading === 'number' && dtSec > 0.05) {
-        const distM = (this._lastConfirmed.speedKmh / 3.6) * dtSec;
-        const headingRad = toRad(this._lastConfirmed.heading);
-        const dLat = (distM * Math.cos(headingRad)) / EARTH_RADIUS_M;
-        const dLon = (distM * Math.sin(headingRad)) / (EARTH_RADIUS_M * Math.cos(toRad(lat)));
+      // Heading used for extrapolation: unified vehicleHeading first, GPS bearing as fallback.
+      const vh = this._vehicleHeading && now - this._vehicleHeading.at < 3000 ? this._vehicleHeading : null;
+      let heading = null, confidence = 0, headingSource = 'none';
+      if (vh && vh.valid) { heading = vh.heading; confidence = vh.confidence; headingSource = 'vehicle'; }
+      else if (typeof fix.heading === 'number' && this._lastGpsBearing !== null && this._lastGpsBearing !== undefined) {
+        heading = fix.heading; confidence = 0.5; headingSource = 'gps';
+      }
+
+      // How far we are willing to guess: shrinks with low heading confidence, poor accuracy, old fix.
+      const accF = typeof fix.accuracy === 'number' && fix.accuracy > 30 ? 0.6 : 1;
+      const maxSec = heading === null || confidence < PREDICT_MIN_CONFIDENCE
+        ? 0
+        : PREDICT_MAX_SEC * Math.min(1, Math.max(0.3, confidence)) * accF;
+      const dtSec = Math.min(maxSec, ageSec);
+
+      let lat = fix.lat, lon = fix.lon, predictedM = 0;
+      if (this.isMoving && heading !== null && dtSec > 0.05) {
+        predictedM = Math.min(PREDICT_MAX_DIST_M, (fix.speedKmh / 3.6) * dtSec);
+        const headingRad = toRad(heading);
+        const dLat = (predictedM * Math.cos(headingRad)) / EARTH_RADIUS_M;
+        const dLon = (predictedM * Math.sin(headingRad)) / (EARTH_RADIUS_M * Math.cos(toRad(lat)));
         lat += toDeg(dLat);
         lon += toDeg(dLon);
       }
@@ -319,9 +351,11 @@ export class GPSManager {
         status: this.status,
         latitude: lat,
         longitude: lon,
-        heading: this._lastConfirmed.heading,
-        speedKmh: this._lastConfirmed.speedKmh,
-        accuracy: this._lastConfirmed.accuracy,
+        heading: heading !== null ? heading : fix.heading,
+        headingSource,
+        predictedM,
+        speedKmh: fix.speedKmh,
+        accuracy: fix.accuracy,
         quality: this.quality,
         isMoving: this.isMoving,
         timestamp: now,
